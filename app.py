@@ -10,15 +10,27 @@ import geemap
 # 1. Earth Engine Authentication Setup
 # ==========================================
 try:
-    # Streamlit Cloud reads the private token from the Dashboard Secrets panel
-    ee_token = st.secrets["EARTHENGINE_TOKEN"]
-    # Initialize using the private service account credentials
+    # Read the raw TOML string secret from Streamlit Cloud
+    ee_token_raw = st.secrets["EARTHENGINE_TOKEN"]
+    
+    # Parse the string into a valid Python dictionary object
+    import json
     import os
+    credentials_dict = json.loads(ee_token_raw)
+    
+    # Extract the client email dynamically from your key profile
+    service_account_email = credentials_dict["client_email"]
+    
+    # Write the key securely to a temporary local file on the container
     with open("ee_credentials.json", "w") as f:
-        f.write(ee_token)
-    ee.Initialize(ee.ServiceAccountCredentials('', 'ee_credentials.json'))
+        json.dump(credentials_dict, f)
+        
+    # Explicitly pass BOTH the email and the keyfile path to Earth Engine
+    credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
+    ee.Initialize(credentials)
+    
 except Exception as e:
-    st.error("Earth Engine credentials missing or invalid. Please check your Streamlit Secrets configuration.")
+    st.error(f"Earth Engine Authentication Failed. Error details: {e}")
 
 # ==========================================
 # 2. Model Loading (Cached)
@@ -36,7 +48,7 @@ st.title("Automated GEE Malaria Surveillance Platform")
 st.write("Extracting automated environmental indices for Karagwe District, Tanzania.")
 
 # User inputs the target year for the surveillance update
-target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025, 2026])
+target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
 
 if st.button("Generate 30m Visual Risk Map Profile"):
     with st.spinner(f"Extracting GEE layers and evaluating Random Forest model for {target_year}..."):
