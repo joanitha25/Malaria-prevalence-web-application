@@ -1,0 +1,159 @@
+import streamlit as st
+import joblib
+import json
+import numpy as np
+import pandas as pd
+import ee
+import geemap
+
+# ==========================================
+# 1. Earth Engine Authentication Setup
+# ==========================================
+try:
+    # Streamlit Cloud reads the private token from the Dashboard Secrets panel
+    ee_token = st.secrets["EARTHENGINE_TOKEN"]
+    # Initialize using the private service account credentials
+    import os
+    with open("ee_credentials.json", "w") as f:
+        f.write(ee_token)
+    ee.Initialize(ee.ServiceAccountCredentials('', 'ee_credentials.json'))
+except Exception as e:
+    st.error("Earth Engine credentials missing or invalid. Please check your Streamlit Secrets configuration.")
+
+# ==========================================
+# 2. Model Loading (Cached)
+# ==========================================
+@st.cache_resource
+def load_ml_pipeline():
+    return joblib.load("best_rf_reduced_model.joblib")
+
+model_pipeline = load_ml_pipeline()
+
+# ==========================================
+# 3. User Interface
+# ==========================================
+st.title("Automated GEE Malaria Surveillance Platform")
+st.write("Extracting automated environmental indices for Karagwe District, Tanzania.")
+
+# User inputs the target year for the surveillance update
+target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025, 2026])
+
+if st.button("Generate 30m Visual Risk Map Profile"):
+    with st.spinner(f"Extracting GEE layers and evaluating Random Forest model for {target_year}..."):
+        
+        # ------------------------------------------
+        # 4. Define Geographic Spatial Boundaries
+        # ------------------------------------------
+        districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+        aoi = districts.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
+        
+        start_date = ee.Date.fromYMD(target_year, 1, 1)
+        end_date = ee.Date.fromYMD(target_year + 1, 1, 1)
+        
+        commonCRS = "EPSG:4326"
+        fineScale = 30
+        pfprScale = 5000
+        commonProjection = ee.Projection(commonCRS).atScale(fineScale)
+
+        # ------------------------------------------
+        # 5. Extract Predictor Variables from GEE
+        # ------------------------------------------
+        # Sentinel-2 Imagery
+        s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+            .filterBounds(aoi)\
+            .filterDate(start_date, end_date)\
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+        
+        s2 = s2Collection.median().clip(aoi)
+        
+        # Calculate indices matching your 6-feature requirements
+        ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
+        ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+        
+        # MODIS LST (°C)
+        lst = ee.ImageCollection("MODIS/061/MOD11A1")\
+            .filterBounds(aoi)\
+            .filterDate(start_date, end_date)\
+            .select("LST_Day_1km")\
+            .mean()\
+            .multiply(0.02).subtract(273.15).rename("LST")
+            
+        # CHIRPS Rainfall (mm)
+        rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+            .filterBounds(aoi)\
+            .filterDate(start_date, end_date)\
+            .select("precipitation")\
+            .sum().rename("Rainfall")
+            
+        # SRTM Elevation
+        elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation")
+        
+        # Distance to Water (with your exact required fix!)
+        water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi).unmask(0)
+        distWater = water.fastDistanceTransform(30, "pixels", "squared_euclidean").sqrt().multiply(30).rename("DistWater")
+
+        # ------------------------------------------
+        # 6. Aggregate to 5km Model Resolution for Math
+        # ------------------------------------------
+        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat().clip(aoi).reproject(crs=commonCRS, scale=fineScale)
+        meanStack5km = meanStack.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
+        
+        distWater5km = distWater.toFloat().reproject(crs=commonCRS, scale=fineScale).reduceResolution(reducer=ee.Reducer.min(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale).rename("DistWater")
+        
+        fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
+
+        # ------------------------------------------
+        # 7. Extract Arrays to Python Dataframe
+        # ------------------------------------------
+        # Pull the spatial matrix arrays from GEE into local Python memory
+        band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
+        pixel_data = geemap.ee_to_pandas(fullStack5km.sample(region=aoi.geometry(), scale=pfprScale, factor=1, geometries=True))
+        
+        # Guard clause: ensure data was loaded
+        if pixel_data.empty:
+            st.error("No pixel data could be extracted from GEE bounds.")
+        else:
+            # Separate geographic spatial geometry references from feature inputs
+            X_pixels = pixel_data[band_names]
+            
+            # ------------------------------------------
+            # 8. Compute Model Predictions
+            # ------------------------------------------
+            # The pipeline scales and predicts PfPR using the loaded joblib model
+            pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
+            
+            # ------------------------------------------
+            # 9. Re-upload Predictions to GEE and Downscale to 30m
+            # ------------------------------------------
+            # Convert the predicted column back into an Earth Engine Image object
+            predicted_gee_layer = geemap.pandas_to_ee(pixel_data[["longitude", "latitude", "predicted_PfPR"]], latitude="latitude", longitude="longitude")
+            
+            # Rasterize the predicted points back into a 5km pixel grid canvas
+            prediction_raster_5km = predicted_gee_layer.reduceToImage(properties=["predicted_PfPR"], reducer=ee.Reducer.first()).rename("PfPR_Prediction")
+            
+            # The Resolution Trick: Force the 5km model array to smoothly scale to 30m using Bilinear Resampling
+            smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonCRS, scale=fineScale).clip(aoi)
+
+            # ------------------------------------------
+            # 10. Display Map on Interactive Streamlit Dashboard
+            # ------------------------------------------
+            st.success(f"Successfully processed {target_year} model pipeline!")
+            st.write("### Interactive 30m Smoothed Risk Map:")
+            
+            # Generate a Leaflet map window via geemap
+            Map = geemap.Map(center=[-1.59, 31.21], zoom=9)
+            
+            # Define visualization color gradients (Green to Red for low to high parasite risk)
+            vis_params = {
+                'min': float(pixel_data["predicted_PfPR"].min()),
+                'max': float(pixel_data["predicted_PfPR"].max()),
+                'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
+            }
+            
+            # Add layers to the map profile view
+            Map.addLayer(aoi, {'color': 'black'}, 'Karagwe Border', True, 0.4)
+            Map.addLayer(smoothed_prediction_30m, vis_params, f'Predicted PfPR ({target_year}) - 30m Smooth')
+            Map.add_colorbar(vis_params, label="Parasite Rate Prediction (%)")
+            
+            # Render map to the Streamlit page canvas
+            Map.to_streamlit(height=600)

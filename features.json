@@ -1,0 +1,21 @@
+{
+    "feature_names": [
+        "NDWI",
+        "NDMI",
+        "LST",
+        "Rainfall",
+        "Elevation",
+        "DistWater"
+    ],
+    "target": "PfPR",
+    "target_units": "%",
+    "model": "Random Forest",
+    "feature_set": "Reduced Variables",
+    "number_of_features": 6,
+    "removed_features": [
+        "NDVI",
+        "MNDWI",
+        "Slope",
+        "NDBI"
+    ]
+}
