@@ -9,23 +9,27 @@ import geemap
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
+import json
+import os
+import ee
+import streamlit as st
+
 try:
-    # Read the raw TOML string secret from Streamlit Cloud
+    # 1. Grab the token string from your secrets dashboard
     ee_token_raw = st.secrets["EARTHENGINE_TOKEN"]
     
-    # Parse the string into a valid Python dictionary object
-    import json
-    import os
-    credentials_dict = json.loads(ee_token_raw)
+    # 2. Force-replace any problematic newline layouts
+    clean_token = ee_token_raw.replace('\\n', '\n')
     
-    # Extract the client email dynamically from your key profile
+    # 3. Safely convert string format back into a structural dictionary
+    credentials_dict = json.loads(clean_token)
     service_account_email = credentials_dict["client_email"]
     
-    # Write the key securely to a temporary local file on the container
+    # 4. Generate the local file mapping for the environment container
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # Explicitly pass BOTH the email and the keyfile path to Earth Engine
+    # 5. Handshake validation with Earth Engine infrastructure
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
