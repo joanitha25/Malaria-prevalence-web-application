@@ -10,22 +10,20 @@ import os
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
+
 try:
-    # 1. Grab the token string from your secrets dashboard
-    ee_token_raw = st.secrets["EARTHENGINE_TOKEN"]
+    # Streamlit reads the TOML table directly as a native Python dictionary
+    credentials_dict = dict(st.secrets["EARTHENGINE_TOKEN"])
     
-    # 2. Force-replace any problematic newline layouts
-    clean_token = ee_token_raw.replace('\\n', '\n')
-    
-    # 3. Safely convert string format back into a structural dictionary
-    credentials_dict = json.loads(clean_token)
+    # Clean string encoding for the private key parameter directly
+    credentials_dict["private_key"] = credentials_dict["private_key"].replace('\\n', '\n')
     service_account_email = credentials_dict["client_email"]
     
-    # 4. Generate the local file mapping for the environment container
+    # Generate the credentials file cache locally on the runtime engine
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # 5. Handshake validation with Earth Engine infrastructure
+    # Execute structural authentication sequence
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
