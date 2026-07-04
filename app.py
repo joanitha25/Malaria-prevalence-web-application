@@ -12,32 +12,15 @@ import os
 # ==========================================
 
 try:
-    # 1. Grab secrets parameters natively as a dictionary array
+    # Streamlit reads the TOML table directly as a native Python dictionary
     credentials_dict = dict(st.secrets["EARTHENGINE_TOKEN"])
-    
-    # 2. Extract the raw string sequence 
-    raw_key_body = credentials_dict["private_key"]
-    
-    # 3. Dynamically chunk the key body text into valid 64-character line steps
-    chunk_size = 64
-    key_chunks = [raw_key_body[i:i+chunk_size] for i in range(0, len(raw_key_body), chunk_size)]
-    
-    # 4. Seamlessly re-assemble the text with valid cryptographic headers and lines
-    formatted_pem_key = (
-        "-----BEGIN PRIVATE KEY-----\n" +
-        "\n".join(key_chunks) +
-        "\n-----END PRIVATE KEY-----\n"
-    )
-    
-    # 5. Overwrite the parameter back into the dictionary ecosystem
-    credentials_dict["private_key"] = formatted_pem_key
     service_account_email = credentials_dict["client_email"]
     
-    # 6. Generate the local file mapping for the environment container
+    # Generate the credentials file cache locally on the web server instance
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # 7. Execute structural validation sequence
+    # Execute structural authentication sequence
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
