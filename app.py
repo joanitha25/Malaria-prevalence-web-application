@@ -14,12 +14,6 @@ import os
 try:
     # Streamlit reads the TOML table directly as a native Python dictionary
     credentials_dict = dict(st.secrets["EARTHENGINE_TOKEN"])
-    
-    # Advanced sanitization: handles both literal text escapes and true control codes
-    raw_key = credentials_dict["private_key"]
-    clean_key = raw_key.replace('\\n', '\n').replace('\n', '\n')
-    credentials_dict["private_key"] = clean_key
-    
     service_account_email = credentials_dict["client_email"]
     
     # Generate the credentials file cache locally on the runtime engine
