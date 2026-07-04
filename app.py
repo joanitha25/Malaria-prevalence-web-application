@@ -6,21 +6,27 @@ import pandas as pd
 import ee
 import geemap
 import os
+import base64
 
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
 
 try:
-    # Streamlit reads the TOML table directly as a native Python dictionary
-    credentials_dict = dict(st.secrets["EARTHENGINE_TOKEN"])
+    # 1. Extract the flat, safe base64 sequence string
+    b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
+    
+    # 2. Decode the Base64 bytes back into a standard string layout
+    decoded_bytes = base64.b64decode(b64_credentials)
+    credentials_dict = json.loads(decoded_bytes.decode("utf-8"))
+    
     service_account_email = credentials_dict["client_email"]
     
-    # Generate the credentials file cache locally on the web server instance
+    # 3. Generate the local file mapping for the environment container
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # Execute structural authentication sequence
+    # 4. Execute structural validation sequence
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
