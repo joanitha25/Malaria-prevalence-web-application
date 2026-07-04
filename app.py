@@ -5,15 +5,11 @@ import numpy as np
 import pandas as pd
 import ee
 import geemap
+import os
 
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
-import json
-import os
-import ee
-import streamlit as st
-
 try:
     # 1. Grab the token string from your secrets dashboard
     ee_token_raw = st.secrets["EARTHENGINE_TOKEN"]
@@ -46,7 +42,7 @@ def load_ml_pipeline():
 model_pipeline = load_ml_pipeline()
 
 # ==========================================
-# 3. User Interface
+# 3. User Interface Layout
 # ==========================================
 st.title("Automated GEE Malaria Surveillance Platform")
 st.write("Extracting automated environmental indices for Karagwe District, Tanzania.")
@@ -104,7 +100,7 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # SRTM Elevation
         elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation")
         
-        # Distance to Water (with your exact required fix!)
+        # Distance to Water
         water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi).unmask(0)
         distWater = water.fastDistanceTransform(30, "pixels", "squared_euclidean").sqrt().multiply(30).rename("DistWater")
 
@@ -119,22 +115,46 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
 
         # ------------------------------------------
-        # 7. Extract Arrays to Python Dataframe
+        # 7. Extract Aggregated Pixels to Python Dataframe Safely
         # ------------------------------------------
-        # Pull the spatial matrix arrays from GEE into local Python memory
         band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
-        pixel_data = geemap.ee_to_pandas(fullStack5km.sample(region=aoi.geometry(), scale=pfprScale, factor=1, geometries=True))
-        
-        # Guard clause: ensure data was loaded
+
+        # Add coordinate bands directly to the aggregated 5km stack
+        pixel_grid = fullStack5km.addBands(ee.Image.pixelLonLat())
+
+        # Extract data matching the exact 5km pixels directly
+        pixel_samples = pixel_grid.reduceRegion(
+            reducer=ee.Reducer.toList(),
+            geometry=aoi.geometry(),
+            scale=pfprScale,
+            crs=commonCRS,
+            maxPixels=1e6
+        ).getInfo()
+
+        # Convert the dictionary arrays directly into a structured Pandas DataFrame
+        pixel_data = pd.DataFrame({
+            "longitude": pixel_samples["longitude"],
+            "latitude": pixel_samples["latitude"],
+            "NDWI": pixel_samples["NDWI"],
+            "NDMI": pixel_samples["NDMI"],
+            "LST": pixel_samples["LST"],
+            "Rainfall": pixel_samples["Rainfall"],
+            "Elevation": pixel_samples["Elevation"],
+            "DistWater": pixel_samples["DistWater"]
+        })
+
+        # Drop any rows that fall outside the exact vector boundary mask of Karagwe
+        pixel_data = pixel_data.dropna(subset=band_names)
+            
+        # ------------------------------------------
+        # 8. Compute Model Predictions
+        # ------------------------------------------
         if pixel_data.empty:
             st.error("No pixel data could be extracted from GEE bounds.")
         else:
-            # Separate geographic spatial geometry references from feature inputs
+            # Map input array features directly
             X_pixels = pixel_data[band_names]
             
-            # ------------------------------------------
-            # 8. Compute Model Predictions
-            # ------------------------------------------
             # The pipeline scales and predicts PfPR using the loaded joblib model
             pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
             
