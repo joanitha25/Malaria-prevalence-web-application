@@ -13,20 +13,42 @@ import base64
 # ==========================================
 
 try:
-    # 1. Extract the flat, safe base64 sequence string
+    # 1. Pull the base64 string from your secrets panel
     b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
     
-    # 2. Decode the Base64 bytes back into a standard string layout
-    decoded_bytes = base64.b64decode(b64_credentials)
-    credentials_dict = json.loads(decoded_bytes.decode("utf-8"))
+    # 2. Decode it back into text
+    decoded_text = base64.b64decode(b64_credentials).decode("utf-8")
     
+    # 3. Smart Parser: Reconstruct the dictionary manually from the TOML structure
+    credentials_dict = {}
+    
+    # Clean up the key block if headers are present
+    if "private_key = '''" in decoded_text:
+        # Separate the massive multiline private key safely
+        parts = decoded_text.split("private_key = '''")
+        top_and_bottom = parts[0] + parts[1].split("'''")[1]
+        private_key_body = parts[1].split("'''")[0].strip()
+        credentials_dict["private_key"] = private_key_body
+        lines = top_and_bottom.split("\n")
+    else:
+        lines = decoded_text.split("\n")
+        
+    # Process standard text configuration elements
+    for line in lines:
+        if "=" in line and not line.startswith("["):
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                credentials_dict[key] = val
+
     service_account_email = credentials_dict["client_email"]
     
-    # 3. Generate the local file mapping for the environment container
+    # 4. Generate the local file mapping for the environment container
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # 4. Execute structural validation sequence
+    # 5. Execute structural validation sequence
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
