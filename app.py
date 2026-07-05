@@ -197,8 +197,8 @@ if st.session_state.map_ready:
     import folium
     import streamlit.components.v1 as components
 
-    # 1. Initialize a pure Folium map object centered on Karagwe
-    f_map = folium.Map(location=[-1.59, 31.21], zoom=9, control_scale=True)
+    # FIX: Change zoom=9 to zoom_start=9
+    f_map = folium.Map(location=[-1.59, 31.21], zoom_start=9, control_scale=True)
     
     # 2. Extract the authenticated map tile URLs directly from Google Earth Engine
     # Vector Boundary Tile
