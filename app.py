@@ -197,14 +197,14 @@ if st.session_state.map_ready:
     import folium
     import streamlit.components.v1 as components
 
-    # FIX: Change zoom=9 to zoom_start=9
+    # Initialize a pure Folium map object centered on Karagwe
     f_map = folium.Map(location=[-1.59, 31.21], zoom_start=9, control_scale=True)
     
     # 2. Extract the authenticated map tile URLs directly from Google Earth Engine
-    # Vector Boundary Tile
+    # Vector Boundary Tile (FIXED: folium.TileLayer)
     aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
-    folium.RasterTileLayer(
-        tile_url=aoi_map_id['tile_fetcher'].url_format,
+    folium.TileLayer(
+        tiles=aoi_map_id['tile_fetcher'].url_format,
         attr='Google Earth Engine',
         name='Karagwe Border',
         overlay=True,
@@ -218,10 +218,10 @@ if st.session_state.map_ready:
         'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
     }
     
-    # Prediction Raster Tile
+    # Prediction Raster Tile (FIXED: folium.TileLayer and changed tile_url to tiles)
     prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
-    folium.RasterTileLayer(
-        tile_url=prediction_map_id['tile_fetcher'].url_format,
+    folium.TileLayer(
+        tiles=prediction_map_id['tile_fetcher'].url_format,
         attr='Google Earth Engine',
         name=f'Predicted PfPR ({st.session_state.target_year})',
         overlay=True,
