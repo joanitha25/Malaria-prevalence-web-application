@@ -133,17 +133,16 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # ------------------------------------------
         band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
         
-        # Combine all our raw source layers directly (No heavy reduceResolution step!)
+        # Combine all our raw source layers directly
         raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
-        # Reduce the regions strictly around our pre-calculated 5km points. 
-        # This takes almost zero server memory compared to sampling a reduced image canvas.
+        # Reduce the regions strictly around our pre-calculated 5km points
         pixel_samples = raw_stack.reduceRegions(
             collection=grid_samples,
-            reducer=ee.Reducer.mean(), # Computes the local value at that grid point context
-            scale=fineScale,           # Looks at the true underlying data scale
+            reducer=ee.Reducer.mean(),
+            scale=fineScale,
             crs=commonCRS,
-            tileScale=4                # Maximizes parallel computing power safely
+            tileScale=4
         ).getInfo()
 
         # Extract features into the Pandas DataFrame structure
@@ -154,17 +153,20 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         else:
             pixel_data = pd.DataFrame(features_list)
             
-            # Map the exact coordinate keys matching your prediction execution pipeline below
-            if len(pixel_samples["features"]) > 0:
-                pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
-                pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
+            # FIX: pixelLonLat saves coordinates as 'longitude' and 'latitude' inside properties!
+            # If for some reason the keys are named differently by GEE, we map them safely:
+            if "longitude" not in pixel_data.columns:
+                if "lon" in pixel_data.columns:
+                    pixel_data = pixel_data.rename(columns={"lon": "longitude", "lat": "latitude"})
+                else:
+                    st.error("Coordinate properties were not found in the extracted Earth Engine feature stack.")
 
         # Clean the dataset profile
         if not pixel_data.empty:
-            # Filter out any keys that don't match the model features
-            pixel_data = pixel_data[[col for col in pixel_data.columns if col in band_names or col in ["longitude", "latitude"]]]
+            # Keep only columns matching the model features and spatial coordinates
+            valid_cols = band_names + ["longitude", "latitude"]
+            pixel_data = pixel_data[[col for col in pixel_data.columns if col in valid_cols]]
             pixel_data = pixel_data.dropna(subset=band_names)
-            
         # ------------------------------------------
         # 8. Compute Model Predictions
         # ------------------------------------------
