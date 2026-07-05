@@ -194,7 +194,7 @@ if st.session_state.map_ready:
     st.success(f"Successfully processed {st.session_state.target_year} model pipeline!")
     st.write("### Interactive 30m Smoothed Risk Map:")
     
-    # Initialize interactive geemap object (inherits natively from Folium)
+    # Initialize interactive geemap object
     Map = geemap.Map(center=[-1.59, 31.21], zoom=9)
     
     vis_params = {
@@ -208,8 +208,8 @@ if st.session_state.map_ready:
     Map.addLayer(st.session_state.smoothed_prediction_30m, vis_params, f'Predicted PfPR ({st.session_state.target_year}) - 30m Smooth')
     Map.add_colorbar(vis_params, label="Parasite Rate Prediction (%)")
     
-    # FIX: Export the HTML component directly from the Map object itself
-    map_html = Map._repr_html_()
+    # FIX: Use the native geemap export method to create a clean HTML string stream
+    map_html = Map.to_html()
     
     # Render the raw HTML frame onto the Streamlit canvas
     import streamlit.components.v1 as components
