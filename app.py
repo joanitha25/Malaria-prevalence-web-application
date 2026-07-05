@@ -55,6 +55,7 @@ if "map_ready" not in st.session_state:
     st.session_state.pixel_data = None
     st.session_state.aoi = None
     st.session_state.target_year = None
+    st.session_state.target_district = None # FIXED: Initialized here
 
 # User inputs the target year for the surveillance update
 target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
@@ -199,13 +200,14 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
             st.session_state.aoi = aoi
             st.session_state.target_year = target_year
+            st.session_state.target_district = target_district # FIXED: Explicitly saved here
             st.session_state.map_ready = True
 
 # ==========================================
 # 11. Persistent Map Rendering Render Loop
 # ==========================================
 if st.session_state.map_ready:
-    st.success(f"Successfully processed {st.session_state.target_year} model pipeline!")
+    st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
     st.write("### Interactive 30m Smoothed Risk Map:")
     
     import folium
@@ -229,7 +231,7 @@ if st.session_state.map_ready:
     folium.TileLayer(
         tiles=aoi_map_id['tile_fetcher'].url_format,
         attr='Google Earth Engine',
-        name='Karagwe Border',
+        name=f'{st.session_state.target_district} Border',
         overlay=True,
         control=True
     ).add_to(f_map)
@@ -290,7 +292,7 @@ if st.session_state.map_ready:
     <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
       <button onclick="window.print()" style='padding: 6px 12px; background: white; border: 2px solid #ccc; 
         border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
-         📷 Save Map View
+          📷 Save Map View
       </button>
     </div>
     {{% endmacro %}}
