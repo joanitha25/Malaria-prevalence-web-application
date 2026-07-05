@@ -194,23 +194,46 @@ if st.session_state.map_ready:
     st.success(f"Successfully processed {st.session_state.target_year} model pipeline!")
     st.write("### Interactive 30m Smoothed Risk Map:")
     
-    # Initialize interactive geemap object
-    Map = geemap.Map(center=[-1.59, 31.21], zoom=9)
+    import folium
+    import streamlit.components.v1 as components
+
+    # 1. Initialize a pure Folium map object centered on Karagwe
+    f_map = folium.Map(location=[-1.59, 31.21], zoom=9, control_scale=True)
     
+    # 2. Extract the authenticated map tile URLs directly from Google Earth Engine
+    # Vector Boundary Tile
+    aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
+    folium.RasterTileLayer(
+        tile_url=aoi_map_id['tile_fetcher'].url_format,
+        attr='Google Earth Engine',
+        name='Karagwe Border',
+        overlay=True,
+        control=True
+    ).add_to(f_map)
+    
+    # 3. Define visualization color gradients (Green to Red for low to high risk)
     vis_params = {
         'min': float(st.session_state.pixel_data["predicted_PfPR"].min()),
         'max': float(st.session_state.pixel_data["predicted_PfPR"].max()),
         'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
     }
     
-    # Add compiled layers to mapping interface canvas
-    Map.addLayer(st.session_state.aoi, {'color': 'black'}, 'Karagwe Border', True, 0.4)
-    Map.addLayer(st.session_state.smoothed_prediction_30m, vis_params, f'Predicted PfPR ({st.session_state.target_year}) - 30m Smooth')
-    Map.add_colorbar(vis_params, label="Parasite Rate Prediction (%)")
+    # Prediction Raster Tile
+    prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
+    folium.RasterTileLayer(
+        tile_url=prediction_map_id['tile_fetcher'].url_format,
+        attr='Google Earth Engine',
+        name=f'Predicted PfPR ({st.session_state.target_year})',
+        overlay=True,
+        control=True,
+        opacity=0.8
+    ).add_to(f_map)
     
-    # FIX: Use the native geemap export method to create a clean HTML string stream
-    map_html = Map.to_html()
+    # 4. Add a Layer Control toggle to the map interface canvas
+    folium.LayerControl().add_to(f_map)
     
-    # Render the raw HTML frame onto the Streamlit canvas
-    import streamlit.components.v1 as components
+    # 5. Compile the map asset to a raw HTML text stream string natively
+    map_html = f_map._repr_html_()
+    
+    # Render the container frame directly onto the Streamlit application canvas
     components.html(map_html, height=600, scrolling=True)
