@@ -71,11 +71,12 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # ------------------------------------------
         # 5. Extract Predictor Variables from GEE
         # ------------------------------------------
-        # Sentinel-2 Imagery
+        # Sentinel-2 Imagery (Lighten workload by selecting only the bands needed for NDWI/NDMI)
         s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
             .filterBounds(aoi)\
             .filterDate(start_date, end_date)\
-            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))\
+            .select(["B3", "B8", "B11"])
         
         s2 = s2Collection.median().clip(aoi)
         
@@ -101,18 +102,21 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # SRTM Elevation
         elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation")
         
-        # Distance to Water
-        water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi).unmask(0)
-        distWater = water.fastDistanceTransform(30, "pixels", "squared_euclidean").sqrt().multiply(30).rename("DistWater")
+        # Optimization: Calculate water mask directly at 5km target scale to prevent timeout
+        water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi)
+        
+        # We project the water layer directly to our target map grid before doing the math transform
+        water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
+        distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater")
 
         # ------------------------------------------
         # 6. Aggregate to 5km Model Resolution for Math
         # ------------------------------------------
-        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat().clip(aoi).reproject(crs=commonCRS, scale=fineScale)
+        # Combine the other layers, reduce their resolution first, then stitch them to the pre-calculated distance map
+        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat().clip(aoi)
         meanStack5km = meanStack.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
         
-        distWater5km = distWater.toFloat().reproject(crs=commonCRS, scale=fineScale).reduceResolution(reducer=ee.Reducer.min(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale).rename("DistWater")
-        
+        # Combine everything cleanly
         fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
 
         # ------------------------------------------
