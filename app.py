@@ -208,5 +208,13 @@ if st.session_state.map_ready:
     Map.addLayer(st.session_state.smoothed_prediction_30m, vis_params, f'Predicted PfPR ({st.session_state.target_year}) - 30m Smooth')
     Map.add_colorbar(vis_params, label="Parasite Rate Prediction (%)")
     
-    # Render map safely to the UI output container
-    Map.to_streamlit(height=600)
+    # NEW COMPATIBILITY WORKAROUND:
+    # 1. Compile the map into a standard Folium layout object
+    folium_map = Map.to_folium()
+    
+    # 2. Render the map object as a static HTML text stream
+    map_html = folium_map._repr_html_()
+    
+    # 3. Embed the HTML stream inside an isolated Streamlit UI frame component
+    import streamlit.components.v1 as components
+    components.html(map_html, height=600, scrolling=True)
