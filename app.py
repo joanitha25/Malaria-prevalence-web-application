@@ -68,97 +68,95 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         pfprScale = 5000
         commonProjection = ee.Projection(commonCRS).atScale(fineScale)
 
+       # ------------------------------------------
+        # 5. Extract Predictor Variables from GEE (Strictly Bounded)
         # ------------------------------------------
-        # 5. Extract Predictor Variables from GEE
-        # ------------------------------------------
-        # Sentinel-2 Imagery
+        # Get the geometry definition out early to optimize filtering
+        aoi_geometry = aoi.geometry()
+
+        # Sentinel-2 Imagery (Pre-clip collections to minimize server overhead)
         s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-            .filterBounds(aoi)\
+            .filterBounds(aoi_geometry)\
             .filterDate(start_date, end_date)\
             .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))\
             .select(["B3", "B8", "B11"])
         
-        s2 = s2Collection.median().clip(aoi)
+        s2 = s2Collection.median().clip(aoi_geometry)
         
         # Calculate indices matching your 6-feature requirements
         ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
         ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
         
-        # MODIS LST (°C)
+        # MODIS LST (°C) - Filter bounds explicitly
         lst = ee.ImageCollection("MODIS/061/MOD11A1")\
-            .filterBounds(aoi)\
+            .filterBounds(aoi_geometry)\
             .filterDate(start_date, end_date)\
             .select("LST_Day_1km")\
             .mean()\
-            .multiply(0.02).subtract(273.15).rename("LST")
+            .multiply(0.02).subtract(273.15).rename("LST").clip(aoi_geometry)
             
-        # CHIRPS Rainfall (mm)
+        # CHIRPS Rainfall (mm) - Filter bounds explicitly
         rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-            .filterBounds(aoi)\
+            .filterBounds(aoi_geometry)\
             .filterDate(start_date, end_date)\
             .select("precipitation")\
-            .sum().rename("Rainfall")
+            .sum().rename("Rainfall").clip(aoi_geometry)
             
-        # SRTM Elevation
-        elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation")
+        # SRTM Elevation - Clip immediately
+        elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
         
         # Calculate water mask directly at 5km target scale to prevent timeout
-        water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi)
+        water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
         water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
-        distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater")
+        distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
         # ------------------------------------------
         # 6. Aggregate to 5km Model Resolution for Math
         # ------------------------------------------
-        # Combine the other layers into a clean float stack
-        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat().clip(aoi)
-        
-        # FIX: Force the combined image stack to declare the 30m projection grid explicitly 
-        # so reduceResolution knows exactly how to read the baseline pixels.
+        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat()
         meanStackWithProjection = meanStack.setDefaultProjection(commonProjection)
-        
-        # Aggregate the stack up to the 5km model scale using the defined projection
         meanStack5km = meanStackWithProjection.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
         
-        # Combine the aggregated stack with our pre-calculated distance map cleanly
-        fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
+        # Assemble ultimate lightweight layer profile
+        fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi_geometry)
 
         # ------------------------------------------
-        # 7. Extract Aggregated Pixels Safely (Memory Optimized)
+        # 7. Extract Aggregated Pixels Safely (Strict Bounding Box)
         # ------------------------------------------
         band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
 
-        # 1. Create a grid of points inside Karagwe at the 5km scale
-        # This gives us clean coordinates without overloading the server
+        # Append explicit coordinate grids directly to the stack arrays
         pixel_grid = fullStack5km.addBands(ee.Image.pixelLonLat())
         
-        # 2. Convert the area into a regular point sample collection at 5km resolution
+        # Execute the sample method using the strict geometry bounds directly
         samples = pixel_grid.sample(
-            region=aoi.geometry(),
+            region=aoi_geometry,
             scale=pfprScale,
             projection=commonCRS,
             factor=None,
             numPixels=None,
             seed=42,
-            dropNulls=True, # Drop pixels outside the boundary automatically on the server
-            tileScale=2     # Double the processing parallelization to prevent memory leaks
+            dropNulls=True,
+            tileScale=4     # Maximize parallel grid splitting across the GEE cluster
         )
 
-        # 3. Pull down the clean, lightweight table attributes
+        # Download the lightweight feature table stream
         pixel_samples = samples.getInfo()
 
-        # 4. Extract features into the Pandas DataFrame structure
+        # Extract features into the Pandas DataFrame structure
         features_list = [feat["properties"] for feat in pixel_samples["features"]]
         
         if not features_list:
             pixel_data = pd.DataFrame()
         else:
             pixel_data = pd.DataFrame(features_list)
-            # Ensure the columns match what our dataframe code expects below
-            if "longitude" not in pixel_data.columns and "longitude" in pixel_samples["features"][0].get("geometry", {}).get("coordinates", [0,0]):
-                # Fallback to geometry coordinates if explicit bands aren't populated
-                pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
-                pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
+            
+            # Double-check coordinate fields matching your prediction canvas code below
+            if "longitude" not in pixel_data.columns and len(pixel_samples["features"]) > 0:
+                first_feat = pixel_samples["features"][0]
+                if "geometry" in first_feat and "coordinates" in first_feat["geometry"]:
+                    pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
+                    pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
 
         # Clean the dataset profile
         if not pixel_data.empty:
