@@ -11,63 +11,22 @@ import base64
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
-import json
-import os
-import ee
-import streamlit as st
-import base64
 
 try:
-    # 1. Pull the base64 string from your secrets panel
+    # 1. Pull the clean, flat base64 sequence string from secrets
     b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
     
-    # 2. Decode it back into text
-    decoded_text = base64.b64decode(b64_credentials).decode("utf-8")
+    # 2. Decode the Base64 bytes back into a standard string layout
+    decoded_bytes = base64.b64decode(b64_credentials)
+    credentials_dict = json.loads(decoded_bytes.decode("utf-8"))
     
-    # 3. Smart Parser: Reconstruct the dictionary manually from the TOML structure
-    credentials_dict = {}
-    
-    # Clean up the key block if headers are present
-    if "private_key = '''" in decoded_text:
-        # Separate the massive multiline private key safely
-        parts = decoded_text.split("private_key = '''")
-        top_and_bottom = parts[0] + parts[1].split("'''")[1]
-        
-        # Extract the key body, removing headers/footers if they are already inside the string
-        raw_key_body = parts[1].split("'''")[0].strip()
-        raw_key_body = raw_key_body.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
-        # Strip out any remaining rogue text spaces or literal newlines
-        raw_key_body = "".join(raw_key_body.split())
-        
-        # Forcefully rebuild strict 64-character line wraps required by cryptography PEM specifications
-        chunk_size = 64
-        key_chunks = [raw_key_body[i:i+chunk_size] for i in range(0, len(raw_key_body), chunk_size)]
-        
-        credentials_dict["private_key"] = (
-            "-----BEGIN PRIVATE KEY-----\n" +
-            "\n".join(key_chunks) +
-            "\n-----END PRIVATE KEY-----\n"
-        )
-        lines = top_and_bottom.split("\n")
-    else:
-        lines = decoded_text.split("\n")
-        
-    # Process standard text configuration elements
-    for line in lines:
-        if "=" in line and not line.startswith("["):
-            key, val = line.split("=", 1)
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if key and key != "private_key": # Avoid overwriting our formatted key
-                credentials_dict[key] = val
-
     service_account_email = credentials_dict["client_email"]
     
-    # 4. Generate the local file mapping for the environment container
+    # 3. Generate the local file mapping for the environment container
     with open("ee_credentials.json", "w") as f:
         json.dump(credentials_dict, f)
         
-    # 5. Execute structural validation sequence
+    # 4. Execute structural validation sequence
     credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
     ee.Initialize(credentials)
     
