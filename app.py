@@ -71,7 +71,7 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # ------------------------------------------
         # 5. Extract Predictor Variables from GEE
         # ------------------------------------------
-        # Sentinel-2 Imagery (Lighten workload by selecting only the bands needed for NDWI/NDMI)
+        # Sentinel-2 Imagery
         s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
             .filterBounds(aoi)\
             .filterDate(start_date, end_date)\
@@ -102,21 +102,25 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # SRTM Elevation
         elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation")
         
-        # Optimization: Calculate water mask directly at 5km target scale to prevent timeout
+        # Calculate water mask directly at 5km target scale to prevent timeout
         water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi)
-        
-        # We project the water layer directly to our target map grid before doing the math transform
         water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
         distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater")
 
         # ------------------------------------------
         # 6. Aggregate to 5km Model Resolution for Math
         # ------------------------------------------
-        # Combine the other layers, reduce their resolution first, then stitch them to the pre-calculated distance map
+        # Combine the other layers into a clean float stack
         meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat().clip(aoi)
-        meanStack5km = meanStack.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
         
-        # Combine everything cleanly
+        # FIX: Force the combined image stack to declare the 30m projection grid explicitly 
+        # so reduceResolution knows exactly how to read the baseline pixels.
+        meanStackWithProjection = meanStack.setDefaultProjection(commonProjection)
+        
+        # Aggregate the stack up to the 5km model scale using the defined projection
+        meanStack5km = meanStackWithProjection.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
+        
+        # Combine the aggregated stack with our pre-calculated distance map cleanly
         fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
 
         # ------------------------------------------
