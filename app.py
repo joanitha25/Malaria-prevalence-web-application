@@ -195,7 +195,6 @@ if st.session_state.map_ready:
     st.write("### Interactive 30m Smoothed Risk Map:")
     
     import folium
-    from folium import plugins
     import streamlit.components.v1 as components
     from branca.element import Template, MacroElement
 
@@ -234,12 +233,7 @@ if st.session_state.map_ready:
         opacity=0.8
     ).add_to(f_map)
     
-    # 4. FEATURE 1: Add Map Export Screenshot Tool (PNG/JPEG)
-    # This adds a small camera button to the map canvas allowing instant image exports
-    plugins.Screenshot(position="topleft").add_to(f_map)
-    
-    # 5. FEATURE 2: Inject a Professional Epidemiological Color Legend
-    # Calculate intermediate values for the legend labels
+    # 4. Inject a Professional Epidemiological Color Legend & Browser Print Layout Script
     range_step = (max_val - min_val) / 5
     v0 = f"{min_val:.1f}%"
     v1 = f"{(min_val + range_step):.1f}%"
@@ -251,7 +245,7 @@ if st.session_state.map_ready:
     legend_template = f"""
     {{% macro html(this, kwargs) %}}
     <div id='maplegend' class='maplegend' 
-        style='position: absolute; z-index:9999; border:2px solid grey; background-color:rgba(255, 255, 255, 0.9);
+        style='position: absolute; z-index:9999; border:2px solid grey; background-color:rgba(255, 255, 255, 0.95);
         border-radius:6px; padding: 10px; font-size:14px; right: 20px; bottom: 20px; font-family: "Source Sans Pro", sans-serif;'>
       <div class='legend-title' style='font-weight: bold; margin-bottom: 5px;'>Malaria Parasite Rate (PfPR)</div>
       <div class='legend-scale'>
@@ -265,16 +259,23 @@ if st.session_state.map_ready:
         </ul>
       </div>
     </div>
+
+    <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
+      <button onclick="window.print()" style='padding: 6px 10px; background: white; border: 2px solid #ccc; 
+        border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px;'>
+         📷 Save Map View
+      </button>
+    </div>
     {{% endmacro %}}
     """
     macro = MacroElement()
     macro._template = Template(legend_template)
     f_map.add_child(macro)
 
-    # 6. Add standard Layer Control toggle
+    # 5. Add standard Layer Control toggle
     folium.LayerControl().add_to(f_map)
     
-    # 7. Compile map asset to a raw HTML text stream string natively
+    # 6. Compile map asset to a raw HTML text stream string natively
     map_html = f_map._repr_html_()
     
     # Render the container frame directly onto the Streamlit application canvas
