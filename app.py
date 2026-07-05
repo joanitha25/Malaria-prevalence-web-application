@@ -212,14 +212,17 @@ if st.session_state.map_ready:
         control=True
     ).add_to(f_map)
     
-    # 3. Define visualization color gradients (Green to Red for low to high risk)
+    # 3. Define High-Contrast Color Gradients (Highly distinct blue/yellow/red spectrum)
     min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
     max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
+    
+    # Perceptually distinct, high-contrast palette values
+    high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
     
     vis_params = {
         'min': min_val,
         'max': max_val,
-        'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
+        'palette': high_contrast_palette
     }
     
     # Prediction Raster Tile
@@ -230,39 +233,41 @@ if st.session_state.map_ready:
         name=f'Predicted PfPR ({st.session_state.target_year})',
         overlay=True,
         control=True,
-        opacity=0.8
+        opacity=0.85
     ).add_to(f_map)
     
-    # 4. Inject a Professional Epidemiological Color Legend & Browser Print Layout Script
-    range_step = (max_val - min_val) / 5
-    v0 = f"{min_val:.1f}%"
-    v1 = f"{(min_val + range_step):.1f}%"
-    v2 = f"{(min_val + range_step*2):.1f}%"
-    v3 = f"{(min_val + range_step*3):.1f}%"
-    v4 = f"{(min_val + range_step*4):.1f}%"
-    v5 = f"{max_val:.1f}%"
+    # 4. Inject a Continuous SHAP-Style Color Bar Legend & Print Layout
+    v_min = f"{min_val:.1f}%"
+    v_max = f"{max_val:.1f}%"
+
+    # Turn the palette list into a CSS linear gradient string
+    css_gradient = ", ".join(high_contrast_palette)
 
     legend_template = f"""
     {{% macro html(this, kwargs) %}}
     <div id='maplegend' class='maplegend' 
-        style='position: absolute; z-index:9999; border:2px solid grey; background-color:rgba(255, 255, 255, 0.95);
-        border-radius:6px; padding: 10px; font-size:14px; right: 20px; bottom: 20px; font-family: "Source Sans Pro", sans-serif;'>
-      <div class='legend-title' style='font-weight: bold; margin-bottom: 5px;'>Malaria Parasite Rate (PfPR)</div>
-      <div class='legend-scale'>
-        <ul class='legend-labels' style='margin: 0; padding: 0; list-style: none;'>
-          <li><span style='background:#1a9850; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>Low Risk ({v0})</li>
-          <li><span style='background:#91cf60; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v1})</li>
-          <li><span style='background:#d9ef8b; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v2})</li>
-          <li><span style='background:#fee08b; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v3})</li>
-          <li><span style='background:#fc8d59; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v4})</li>
-          <li><span style='background:#d73027; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>High Risk ({v5})</li>
-        </ul>
+        style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95);
+        border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px;
+        font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
+      
+      <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
+        Malaria Parasite Rate (PfPR)
+      </div>
+      
+      <div class='gradient-bar' style='
+        background: linear-gradient(to right, {css_gradient}); 
+        width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'>
+      </div>
+      
+      <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
+        <span>Low Risk ({v_min})</span>
+        <span>High Risk ({v_max})</span>
       </div>
     </div>
 
     <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-      <button onclick="window.print()" style='padding: 6px 10px; background: white; border: 2px solid #ccc; 
-        border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px;'>
+      <button onclick="window.print()" style='padding: 6px 12px; background: white; border: 2px solid #ccc; 
+        border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
          📷 Save Map View
       </button>
     </div>
