@@ -172,11 +172,23 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
             
             # ------------------------------------------
-            # 9. Re-upload Predictions to GEE and Downscale to 30m
+            # 9. Re-upload Predictions to GEE and Rasterize Cleanly
             # ------------------------------------------
             predicted_gee_layer = geemap.pandas_to_ee(pixel_data[["longitude", "latitude", "predicted_PfPR"]], latitude="latitude", longitude="longitude")
-            prediction_raster_5km = predicted_gee_layer.reduceToImage(properties=["predicted_PfPR"], reducer=ee.Reducer.first()).rename("PfPR_Prediction")
-            smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonCRS, scale=fineScale).clip(aoi_geometry)
+            
+            # FIX: We construct a proper 5km scale projection for the rasterizer engine
+            grid_projection = ee.Projection(commonCRS).atScale(pfprScale)
+            
+            # Convert points to images using the explicit 5km grid scale properties
+            prediction_raster_5km = predicted_gee_layer.reduceToImage(
+                properties=["predicted_PfPR"], 
+                reducer=ee.Reducer.first()
+            ).reproject(crs=grid_projection) # Forces Earth Engine to render true 5km grid cells
+            
+            # CHOOSE YOUR VIEW MODE BELOW:
+            # Mode A: Comment this out if you want to see raw, sharp 5km squares.
+            # Mode B: Keep it to see a true high-resolution 30m downscaled map based on real 5km data blocks.
+            smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonProjection).clip(aoi_geometry)
             
             # Save elements to session state so they persist across canvas renders
             st.session_state.pixel_data = pixel_data
@@ -184,8 +196,6 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             st.session_state.aoi = aoi
             st.session_state.target_year = target_year
             st.session_state.map_ready = True
-        else:
-            st.error("No pixel data could be extracted from GEE bounds.")
 
 # ==========================================
 # 11. Persistent Map Rendering Render Loop
