@@ -195,13 +195,15 @@ if st.session_state.map_ready:
     st.write("### Interactive 30m Smoothed Risk Map:")
     
     import folium
+    from folium import plugins
     import streamlit.components.v1 as components
+    from branca.element import Template, MacroElement
 
-    # Initialize a pure Folium map object centered on Karagwe
+    # 1. Initialize a pure Folium map object centered on Karagwe
     f_map = folium.Map(location=[-1.59, 31.21], zoom_start=9, control_scale=True)
     
-    # 2. Extract the authenticated map tile URLs directly from Google Earth Engine
-    # Vector Boundary Tile (FIXED: folium.TileLayer)
+    # 2. Extract and add the authenticated map tile URLs directly from Google Earth Engine
+    # Vector Boundary Tile
     aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
     folium.TileLayer(
         tiles=aoi_map_id['tile_fetcher'].url_format,
@@ -212,13 +214,16 @@ if st.session_state.map_ready:
     ).add_to(f_map)
     
     # 3. Define visualization color gradients (Green to Red for low to high risk)
+    min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
+    max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
+    
     vis_params = {
-        'min': float(st.session_state.pixel_data["predicted_PfPR"].min()),
-        'max': float(st.session_state.pixel_data["predicted_PfPR"].max()),
+        'min': min_val,
+        'max': max_val,
         'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
     }
     
-    # Prediction Raster Tile (FIXED: folium.TileLayer and changed tile_url to tiles)
+    # Prediction Raster Tile
     prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
     folium.TileLayer(
         tiles=prediction_map_id['tile_fetcher'].url_format,
@@ -229,11 +234,48 @@ if st.session_state.map_ready:
         opacity=0.8
     ).add_to(f_map)
     
-    # 4. Add a Layer Control toggle to the map interface canvas
+    # 4. FEATURE 1: Add Map Export Screenshot Tool (PNG/JPEG)
+    # This adds a small camera button to the map canvas allowing instant image exports
+    plugins.Screenshot(position="topleft").add_to(f_map)
+    
+    # 5. FEATURE 2: Inject a Professional Epidemiological Color Legend
+    # Calculate intermediate values for the legend labels
+    range_step = (max_val - min_val) / 5
+    v0 = f"{min_val:.1f}%"
+    v1 = f"{(min_val + range_step):.1f}%"
+    v2 = f"{(min_val + range_step*2):.1f}%"
+    v3 = f"{(min_val + range_step*3):.1f}%"
+    v4 = f"{(min_val + range_step*4):.1f}%"
+    v5 = f"{max_val:.1f}%"
+
+    legend_template = f"""
+    {{% macro html(this, kwargs) %}}
+    <div id='maplegend' class='maplegend' 
+        style='position: absolute; z-index:9999; border:2px solid grey; background-color:rgba(255, 255, 255, 0.9);
+        border-radius:6px; padding: 10px; font-size:14px; right: 20px; bottom: 20px; font-family: "Source Sans Pro", sans-serif;'>
+      <div class='legend-title' style='font-weight: bold; margin-bottom: 5px;'>Malaria Parasite Rate (PfPR)</div>
+      <div class='legend-scale'>
+        <ul class='legend-labels' style='margin: 0; padding: 0; list-style: none;'>
+          <li><span style='background:#1a9850; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>Low Risk ({v0})</li>
+          <li><span style='background:#91cf60; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v1})</li>
+          <li><span style='background:#d9ef8b; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v2})</li>
+          <li><span style='background:#fee08b; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v3})</li>
+          <li><span style='background:#fc8d59; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>({v4})</li>
+          <li><span style='background:#d73027; opacity:0.85; float: left; width: 30px; height: 18px; margin-right: 5px;'></span>High Risk ({v5})</li>
+        </ul>
+      </div>
+    </div>
+    {{% endmacro %}}
+    """
+    macro = MacroElement()
+    macro._template = Template(legend_template)
+    f_map.add_child(macro)
+
+    # 6. Add standard Layer Control toggle
     folium.LayerControl().add_to(f_map)
     
-    # 5. Compile the map asset to a raw HTML text stream string natively
+    # 7. Compile map asset to a raw HTML text stream string natively
     map_html = f_map._repr_html_()
     
     # Render the container frame directly onto the Streamlit application canvas
-    components.html(map_html, height=600, scrolling=True)
+    components.html(map_html, height=650, scrolling=True)
