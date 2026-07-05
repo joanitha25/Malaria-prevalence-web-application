@@ -212,8 +212,8 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             
             # Define visualization color gradients (Green to Red for low to high parasite risk)
             vis_params = {
-                'min': float(pixel_data["predicted_PfPR"].min()),
-                'max': float(pixel_data["predicted_PfPR"].max()),
+                'min': float(pixel_data["predicted_PfPR"].min()) if not pixel_data.empty else 0.0,
+                'max': float(pixel_data["predicted_PfPR"].max()) if not pixel_data.empty else 100.0,
                 'palette': ['#1a9850', '#91cf60', '#d9ef8b', '#fee08b', '#fc8d59', '#d73027']
             }
             
@@ -222,5 +222,6 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             Map.addLayer(smoothed_prediction_30m, vis_params, f'Predicted PfPR ({target_year}) - 30m Smooth')
             Map.add_colorbar(vis_params, label="Parasite Rate Prediction (%)")
             
-            # Render map to the Streamlit page canvas
-            Map.to_streamlit(height=600)
+            # FIX: Force Streamlit to create a dedicated component container for the map object
+            # This ensures the map renders dynamically inside the app canvas viewport.
+            Map.to_streamlit(height=600, responsive=True)
