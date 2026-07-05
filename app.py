@@ -113,20 +113,30 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # ------------------------------------------
         # 6. Create clean 5km Grid Points for Sampling
         # ------------------------------------------
-        # Instead of reducing the image, we generate a clean coordinate grid at 5km resolution
-        lonLat = ee.Image.pixelLonLat().reproject(crs=commonCRS, scale=pfprScale)
+        # Extract the bounding box coordinates of Karagwe to build a clean point grid
+        bounds = aoi_geometry.bounds().getInfo()['coordinates'][0]
+        lons = [pt[0] for pt in bounds]
+        lats = [pt[1] for pt in bounds]
         
-        # Extract the center points of the 5km grid cells within Karagwe
-        grid_samples = lonLat.sample(
-            region=aoi_geometry,
-            scale=pfprScale,
-            projection=commonCRS,
-            factor=None,
-            numPixels=None,
-            seed=42,
-            dropNulls=True,
-            tileScale=2
-        )
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+        
+        # Convert 5km (pfprScale) to approximate degrees (~0.045 degrees)
+        step = pfprScale / 111000.0
+        
+        # Generate the grid array loops natively in Python
+        grid_points = []
+        lon_iter = min_lon
+        while lon_iter <= max_lon:
+            lat_iter = min_lat
+            while lat_iter <= max_lat:
+                grid_points.append(ee.Feature(ee.Geometry.Point([lon_iter, lat_iter])))
+                lat_iter += step
+            lon_iter += step
+            
+        # Convert to an official Earth Engine FeatureCollection and filter strictly to Karagwe boundary
+        raw_grid_collection = ee.FeatureCollection(grid_points)
+        grid_samples = raw_grid_collection.filterBounds(aoi)
 
         # ------------------------------------------
         # 7. Extract Predictor Variables Safely (Point-Based Reduction)
@@ -136,7 +146,7 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         # Combine all our raw source layers directly
         raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
-        # Reduce the regions strictly around our pre-calculated 5km points
+        # Reduce the regions strictly around our spatial point collection grid
         pixel_samples = raw_stack.reduceRegions(
             collection=grid_samples,
             reducer=ee.Reducer.mean(),
@@ -146,20 +156,20 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         ).getInfo()
 
         # Extract features into the Pandas DataFrame structure
-        features_list = [feat["properties"] for feat in pixel_samples["features"]]
+        features_list = []
+        for feat in pixel_samples["features"]:
+            props = feat["properties"]
+            # Pull coordinates directly from the concrete geometry block of each point feature
+            if "geometry" in feat and feat["geometry"] is not None:
+                coords = feat["geometry"]["coordinates"]
+                props["longitude"] = coords[0]
+                props["latitude"] = coords[1]
+                features_list.append(props)
         
         if not features_list:
             pixel_data = pd.DataFrame()
         else:
             pixel_data = pd.DataFrame(features_list)
-            
-            # FIX: pixelLonLat saves coordinates as 'longitude' and 'latitude' inside properties!
-            # If for some reason the keys are named differently by GEE, we map them safely:
-            if "longitude" not in pixel_data.columns:
-                if "lon" in pixel_data.columns:
-                    pixel_data = pixel_data.rename(columns={"lon": "longitude", "lat": "latitude"})
-                else:
-                    st.error("Coordinate properties were not found in the extracted Earth Engine feature stack.")
 
         # Clean the dataset profile
         if not pixel_data.empty:
