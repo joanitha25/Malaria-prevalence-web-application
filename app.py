@@ -111,25 +111,13 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
         # ------------------------------------------
-        # 6. Aggregate to 5km Model Resolution for Math
+        # 6. Create clean 5km Grid Points for Sampling
         # ------------------------------------------
-        meanStack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation]).toFloat()
-        meanStackWithProjection = meanStack.setDefaultProjection(commonProjection)
-        meanStack5km = meanStackWithProjection.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=65535).reproject(crs=commonCRS, scale=pfprScale)
+        # Instead of reducing the image, we generate a clean coordinate grid at 5km resolution
+        lonLat = ee.Image.pixelLonLat().reproject(crs=commonCRS, scale=pfprScale)
         
-        # Assemble ultimate lightweight layer profile
-        fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi_geometry)
-
-        # ------------------------------------------
-        # 7. Extract Aggregated Pixels Safely (Strict Bounding Box)
-        # ------------------------------------------
-        band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
-
-        # Append explicit coordinate grids directly to the stack arrays
-        pixel_grid = fullStack5km.addBands(ee.Image.pixelLonLat())
-        
-        # Execute the sample method using the strict geometry bounds directly
-        samples = pixel_grid.sample(
+        # Extract the center points of the 5km grid cells within Karagwe
+        grid_samples = lonLat.sample(
             region=aoi_geometry,
             scale=pfprScale,
             projection=commonCRS,
@@ -137,11 +125,26 @@ if st.button("Generate 30m Visual Risk Map Profile"):
             numPixels=None,
             seed=42,
             dropNulls=True,
-            tileScale=4     # Maximize parallel grid splitting across the GEE cluster
+            tileScale=2
         )
 
-        # Download the lightweight feature table stream
-        pixel_samples = samples.getInfo()
+        # ------------------------------------------
+        # 7. Extract Predictor Variables Safely (Point-Based Reduction)
+        # ------------------------------------------
+        band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
+        
+        # Combine all our raw source layers directly (No heavy reduceResolution step!)
+        raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
+
+        # Reduce the regions strictly around our pre-calculated 5km points. 
+        # This takes almost zero server memory compared to sampling a reduced image canvas.
+        pixel_samples = raw_stack.reduceRegions(
+            collection=grid_samples,
+            reducer=ee.Reducer.mean(), # Computes the local value at that grid point context
+            scale=fineScale,           # Looks at the true underlying data scale
+            crs=commonCRS,
+            tileScale=4                # Maximizes parallel computing power safely
+        ).getInfo()
 
         # Extract features into the Pandas DataFrame structure
         features_list = [feat["properties"] for feat in pixel_samples["features"]]
@@ -151,15 +154,15 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         else:
             pixel_data = pd.DataFrame(features_list)
             
-            # Double-check coordinate fields matching your prediction canvas code below
-            if "longitude" not in pixel_data.columns and len(pixel_samples["features"]) > 0:
-                first_feat = pixel_samples["features"][0]
-                if "geometry" in first_feat and "coordinates" in first_feat["geometry"]:
-                    pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
-                    pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
+            # Map the exact coordinate keys matching your prediction execution pipeline below
+            if len(pixel_samples["features"]) > 0:
+                pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
+                pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
 
         # Clean the dataset profile
         if not pixel_data.empty:
+            # Filter out any keys that don't match the model features
+            pixel_data = pixel_data[[col for col in pixel_data.columns if col in band_names or col in ["longitude", "latitude"]]]
             pixel_data = pixel_data.dropna(subset=band_names)
             
         # ------------------------------------------
