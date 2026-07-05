@@ -11,6 +11,11 @@ import base64
 # ==========================================
 # 1. Earth Engine Authentication Setup
 # ==========================================
+import json
+import os
+import ee
+import streamlit as st
+import base64
 
 try:
     # 1. Pull the base64 string from your secrets panel
@@ -27,8 +32,22 @@ try:
         # Separate the massive multiline private key safely
         parts = decoded_text.split("private_key = '''")
         top_and_bottom = parts[0] + parts[1].split("'''")[1]
-        private_key_body = parts[1].split("'''")[0].strip()
-        credentials_dict["private_key"] = private_key_body
+        
+        # Extract the key body, removing headers/footers if they are already inside the string
+        raw_key_body = parts[1].split("'''")[0].strip()
+        raw_key_body = raw_key_body.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
+        # Strip out any remaining rogue text spaces or literal newlines
+        raw_key_body = "".join(raw_key_body.split())
+        
+        # Forcefully rebuild strict 64-character line wraps required by cryptography PEM specifications
+        chunk_size = 64
+        key_chunks = [raw_key_body[i:i+chunk_size] for i in range(0, len(raw_key_body), chunk_size)]
+        
+        credentials_dict["private_key"] = (
+            "-----BEGIN PRIVATE KEY-----\n" +
+            "\n".join(key_chunks) +
+            "\n-----END PRIVATE KEY-----\n"
+        )
         lines = top_and_bottom.split("\n")
     else:
         lines = decoded_text.split("\n")
@@ -39,7 +58,7 @@ try:
             key, val = line.split("=", 1)
             key = key.strip()
             val = val.strip().strip('"').strip("'")
-            if key:
+            if key and key != "private_key": # Avoid overwriting our formatted key
                 credentials_dict[key] = val
 
     service_account_email = credentials_dict["client_email"]
