@@ -124,36 +124,45 @@ if st.button("Generate 30m Visual Risk Map Profile"):
         fullStack5km = meanStack5km.addBands(distWater5km).clip(aoi)
 
         # ------------------------------------------
-        # 7. Extract Aggregated Pixels to Python Dataframe Safely
+        # 7. Extract Aggregated Pixels Safely (Memory Optimized)
         # ------------------------------------------
         band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
 
-        # Add coordinate bands directly to the aggregated 5km stack
+        # 1. Create a grid of points inside Karagwe at the 5km scale
+        # This gives us clean coordinates without overloading the server
         pixel_grid = fullStack5km.addBands(ee.Image.pixelLonLat())
-
-        # Extract data matching the exact 5km pixels directly
-        pixel_samples = pixel_grid.reduceRegion(
-            reducer=ee.Reducer.toList(),
-            geometry=aoi.geometry(),
+        
+        # 2. Convert the area into a regular point sample collection at 5km resolution
+        samples = pixel_grid.sample(
+            region=aoi.geometry(),
             scale=pfprScale,
-            crs=commonCRS,
-            maxPixels=1e6
-        ).getInfo()
+            projection=commonCRS,
+            factor=None,
+            numPixels=None,
+            seed=42,
+            dropNulls=True, # Drop pixels outside the boundary automatically on the server
+            tileScale=2     # Double the processing parallelization to prevent memory leaks
+        )
 
-        # Convert the dictionary arrays directly into a structured Pandas DataFrame
-        pixel_data = pd.DataFrame({
-            "longitude": pixel_samples["longitude"],
-            "latitude": pixel_samples["latitude"],
-            "NDWI": pixel_samples["NDWI"],
-            "NDMI": pixel_samples["NDMI"],
-            "LST": pixel_samples["LST"],
-            "Rainfall": pixel_samples["Rainfall"],
-            "Elevation": pixel_samples["Elevation"],
-            "DistWater": pixel_samples["DistWater"]
-        })
+        # 3. Pull down the clean, lightweight table attributes
+        pixel_samples = samples.getInfo()
 
-        # Drop any rows that fall outside the exact vector boundary mask of Karagwe
-        pixel_data = pixel_data.dropna(subset=band_names)
+        # 4. Extract features into the Pandas DataFrame structure
+        features_list = [feat["properties"] for feat in pixel_samples["features"]]
+        
+        if not features_list:
+            pixel_data = pd.DataFrame()
+        else:
+            pixel_data = pd.DataFrame(features_list)
+            # Ensure the columns match what our dataframe code expects below
+            if "longitude" not in pixel_data.columns and "longitude" in pixel_samples["features"][0].get("geometry", {}).get("coordinates", [0,0]):
+                # Fallback to geometry coordinates if explicit bands aren't populated
+                pixel_data["longitude"] = [feat["geometry"]["coordinates"][0] for feat in pixel_samples["features"]]
+                pixel_data["latitude"] = [feat["geometry"]["coordinates"][1] for feat in pixel_samples["features"]]
+
+        # Clean the dataset profile
+        if not pixel_data.empty:
+            pixel_data = pixel_data.dropna(subset=band_names)
             
         # ------------------------------------------
         # 8. Compute Model Predictions
