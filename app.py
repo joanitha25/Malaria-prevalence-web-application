@@ -43,17 +43,14 @@ def load_ml_pipeline():
 model_pipeline = load_ml_pipeline()
 
 # ==========================================
-# 3. Navigation Controls & Session State
+# 3. Main Interface Header Setup
 # ==========================================
 st.set_page_config(page_title="Malaria Prevalence Prediction Tool", layout="wide")
 
-# App Layout Header Customizations
+# App Main Title
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Sidebar navigation menu system
-navigation_tab = st.sidebar.radio("Navigate Workspace:", ["About", "Run Predictions"])
-
-# Initialize session state variables so that map structures persist across tabs
+# Initialize session state variables so data persists across tab switches
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -62,10 +59,13 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = None
     st.session_state.target_district = None
 
+# Create interactive tabs right below the main title instead of using a sidebar
+about_tab, prediction_tab = st.tabs(["About the Application", "Malaria Prevalence Prediction"])
+
 # ==========================================
-# Tab A: About the Application Panel
+# Tab 1: About the Application Panel
 # ==========================================
-if navigation_tab == "About":
+with about_tab:
     st.header("About the Application")
     st.write(
         """
@@ -96,21 +96,35 @@ if navigation_tab == "About":
         increasing the spatial resolution or predictive accuracy of the model.
         """
     )
+    
+    # Expose the download link inside the About section once predictions have run successfully
+    if st.session_state.map_ready:
+        st.write("---")
+        st.write("### 💾 Export Spatial Products:")
+        try:
+            raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
+                crs="EPSG:4326", 
+                scale=5000
+            ).getDownloadURL({
+                'name': f'PfPR_{st.session_state.target_district}_{st.session_state.target_year}_5km',
+                'scale': 5000,
+                'crs': 'EPSG:4326',
+                'filePerBand': False
+            })
+            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
+        except Exception as e:
+            st.info("The GeoTIFF download link is ready on the prediction tab workspace.")
 
 # ==========================================
-# Tab B: Predictions Execution Workspace
+# Tab 2: Prediction Pipeline Workspace
 # ==========================================
-elif navigation_tab == "Run Predictions":
-    st.header("Malaria Surveillance Predictive Engine")
-    st.write("Configure processing metrics to pull remote sensing fields from Google Earth Engine.")
-    
-    # Input Selection UI Fields
+with prediction_tab:
+    # User input selection configuration fields
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
     
-    # Updated Trigger Action button layout
     if st.button("Run Predictions"):
-        with st.spinner("Accessing GEE datasets and calculating point prediction targets..."):
+        with st.spinner("Extracting environmental indicators from GEE and executing pipeline..."):
             
             # ------------------------------------------
             # 4. Define Geographic Spatial Boundaries
@@ -234,7 +248,7 @@ elif navigation_tab == "Run Predictions":
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonProjection).clip(aoi_geometry)
                 
-                # Save execution values inside states to hold context layout updates
+                # Assign to state parameters to persist rendering cross tabs
                 st.session_state.pixel_data = pixel_data
                 st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
                 st.session_state.aoi = aoi
@@ -242,17 +256,12 @@ elif navigation_tab == "Run Predictions":
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-   # Render spatial profile map if prediction run completes successfully
+    # Render results dynamically inside this container space
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
-        # ------------------------------------------
-        # 10. Generate Download Link (Strictly Native 5km Model Resolution)
-        # ------------------------------------------
-        st.write("### 💾 Export Spatial Products:")
-        
+        # Display Download options directly underneath successful runtime flags
         try:
-            # Explicitly capture predictions at the true 5km grid scale properties
             raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
                 crs="EPSG:4326", 
                 scale=5000
@@ -264,7 +273,7 @@ elif navigation_tab == "Run Predictions":
             })
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            st.info("Download link setup timed out or payload size constraint hit on remote servers. Use the print snapshot tool below if this persists.")
+            pass
 
         st.write("### Interactive Map Display Tool:")
         
@@ -314,7 +323,7 @@ elif navigation_tab == "Run Predictions":
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        # FIXED: Added print-color-adjust properties to guarantee colors render on printed PDFs
+        # FIXED: Modified labels to show "Low" and "High" alongside "Malaria Prevalence (PfPR2-10)"
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
         <div id='maplegend' class='maplegend' 
@@ -324,7 +333,7 @@ elif navigation_tab == "Run Predictions":
             print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
           
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
-            Malaria Parasite Rate (PfPR)
+            Malaria Prevalence (PfPR₂₋₁₀)
           </div>
           
           <div class='gradient-bar' style='
@@ -334,8 +343,8 @@ elif navigation_tab == "Run Predictions":
           </div>
           
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low Risk ({v_min})</span>
-            <span>High Risk ({v_max})</span>
+            <span>Low ({v_min})</span>
+            <span>High ({v_max})</span>
           </div>
         </div>
 
