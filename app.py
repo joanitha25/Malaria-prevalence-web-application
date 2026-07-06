@@ -273,7 +273,8 @@ with prediction_tab:
             map_center = [-1.59, 31.21]
             map_zoom = 9
 
-        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
+        # Enforced responsive geometry footprint metrics 
+        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True, width="100%", height="100%")
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
         folium.TileLayer(
@@ -308,33 +309,73 @@ with prediction_tab:
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
+        # CHANGED: Adjusted dimensions, paddings, and absolute locations to fit nicely in PDFs and fullscreens
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
-        <div id='maplegend' class='maplegend' 
-            style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95);
-            border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px;
-            font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
-          
-          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
+        <style>
+          .maplegend {{
+            position: absolute; 
+            z-index: 9999; 
+            border: 2px solid #bbb; 
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 6px; 
+            padding: 8px 12px; 
+            font-size: 12px; 
+            right: 15px; 
+            bottom: 15px; 
+            width: 240px;
+            font-family: "Source Sans Pro", sans-serif; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.15);
+            print-color-adjust: exact; 
+            -webkit-print-color-adjust: exact;
+          }}
+          .legend-title {{
+            font-weight: bold; 
+            margin-bottom: 5px; 
+            text-align: center; 
+            color: #222;
+          }}
+          .gradient-bar {{
+            background: linear-gradient(to right, {css_gradient}) !important; 
+            width: 100%; 
+            height: 14px; 
+            border-radius: 3px; 
+            border: 1px solid #666;
+            print-color-adjust: exact; 
+            -webkit-print-color-adjust: exact;
+          }}
+          .legend-labels {{
+            margin-top: 4px; 
+            font-weight: 600; 
+            color: #444; 
+            display: flex; 
+            justify-content: space-between;
+          }}
+          @media print {{
+            #export-container {{
+              display: none !important; /* Fully hides the button layout during PDF generation */
+            }}
+            .maplegend {{
+              box-shadow: none !important;
+              border: 1px solid #999 !important;
+            }}
+          }}
+        </style>
+
+        <div id='maplegend' class='maplegend'>
+          <div class='legend-title'>
             Malaria Prevalence (PfPR₂₋₁₀)
           </div>
-          
-          <div class='gradient-bar' style='
-            background: linear-gradient(to right, {css_gradient}) !important; 
-            width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;
-            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
-          </div>
-          
-          <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
+          <div class='gradient-bar'></div>
+          <div class='legend-labels'>
             <span>Low ({v_min})</span>
             <span>High ({v_max})</span>
           </div>
         </div>
 
         <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-          <button onclick="window.print()" style='padding: 6px 12px; background: white; border: 2px solid #ccc; 
-            border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+          <button onclick="window.print()" style='padding: 5px 10px; background: white; border: 2px solid #ccc; 
+            border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 11px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
               📷 Save Map View
           </button>
         </div>
@@ -346,4 +387,11 @@ with prediction_tab:
 
         folium.LayerControl().add_to(f_map)
         map_html = f_map._repr_html_()
-        components.html(map_html, height=650, scrolling=True)
+        
+        # CHANGED: Wrapped container inside fixed window dimensions to prevent printing overflow drops
+        responsive_wrapper = f"""
+        <div style="width: 100%; height: 540px; max-width: 100%; margin: 0 auto; box-sizing: border-box; overflow: hidden; border: 1px solid #ddd; border-radius: 4px;">
+            {map_html}
+        </div>
+        """
+        components.html(responsive_wrapper, height=550, scrolling=False)
