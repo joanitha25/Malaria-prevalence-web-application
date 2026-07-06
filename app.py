@@ -43,14 +43,17 @@ def load_ml_pipeline():
 model_pipeline = load_ml_pipeline()
 
 # ==========================================
-# 3. Main Interface Header Setup
+# 3. Navigation Controls & Session State
 # ==========================================
 st.set_page_config(page_title="Malaria Prevalence Prediction Tool", layout="wide")
 
-# App Main Title
+# App Layout Header Customizations
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state variables so data persists across tab switches
+# Sidebar navigation menu system
+navigation_tab = st.sidebar.radio("Navigate Workspace:", ["About", "Run Predictions"])
+
+# Initialize session state variables so that map structures persist across tabs
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -59,13 +62,10 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = None
     st.session_state.target_district = None
 
-# Create interactive tabs right below the main title instead of using a sidebar
-about_tab, prediction_tab = st.tabs(["About the Application", "Malaria Prevalence Prediction"])
-
 # ==========================================
-# Tab 1: About the Application Panel
+# Tab A: About the Application Panel
 # ==========================================
-with about_tab:
+if navigation_tab == "About":
     st.header("About the Application")
     st.write(
         """
@@ -79,9 +79,7 @@ with about_tab:
         Users can select the target district (Karagwe or Kyerwa) and surveillance year, after which the 
         application automatically extracts the required environmental data, generates malaria prevalence predictions, 
         and visualizes the results as an interactive map. The predicted PfPR2-10 values are displayed using a 
-        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence. 
-        Once the prediction pipeline is executed, a download link to retrieve the native model outputs as a GeoTIFF 
-        (.tiff) file is provided within the mapping workspace for further spatial analysis.
+        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence.
         
         The prediction model was developed using satellite-derived environmental variables and validated using 
         spatial cross-validation to ensure reliable prediction across different geographical locations. The 
@@ -100,15 +98,19 @@ with about_tab:
     )
 
 # ==========================================
-# Tab 2: Prediction Pipeline Workspace
+# Tab B: Predictions Execution Workspace
 # ==========================================
-with prediction_tab:
-    # User input selection configuration fields
+elif navigation_tab == "Run Predictions":
+    st.header("Malaria Surveillance Predictive Engine")
+    st.write("Configure processing metrics to pull remote sensing fields from Google Earth Engine.")
+    
+    # Input Selection UI Fields
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
     
+    # Updated Trigger Action button layout
     if st.button("Run Predictions"):
-        with st.spinner("Extracting environmental indicators from GEE and executing pipeline..."):
+        with st.spinner("Accessing GEE datasets and calculating point prediction targets..."):
             
             # ------------------------------------------
             # 4. Define Geographic Spatial Boundaries
@@ -232,7 +234,7 @@ with prediction_tab:
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonProjection).clip(aoi_geometry)
                 
-                # Assign to state parameters to persist rendering cross tabs
+                # Save execution values inside states to hold context layout updates
                 st.session_state.pixel_data = pixel_data
                 st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
                 st.session_state.aoi = aoi
@@ -240,13 +242,17 @@ with prediction_tab:
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # Render results dynamically inside this container space
+   # Render spatial profile map if prediction run completes successfully
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
-        # Display Download option strictly at 5km model scale
+        # ------------------------------------------
+        # 10. Generate Download Link (Strictly Native 5km Model Resolution)
+        # ------------------------------------------
         st.write("### 💾 Export Spatial Products:")
+        
         try:
+            # Explicitly capture predictions at the true 5km grid scale properties
             raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
                 crs="EPSG:4326", 
                 scale=5000
@@ -258,7 +264,7 @@ with prediction_tab:
             })
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
+            st.info("Download link setup timed out or payload size constraint hit on remote servers. Use the print snapshot tool below if this persists.")
 
         st.write("### Interactive Map Display Tool:")
         
@@ -273,8 +279,7 @@ with prediction_tab:
             map_center = [-1.59, 31.21]
             map_zoom = 9
 
-        # Enforced responsive geometry footprint metrics 
-        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True, width="100%", height="100%")
+        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
         folium.TileLayer(
@@ -309,73 +314,34 @@ with prediction_tab:
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        # CHANGED: Adjusted dimensions, paddings, and absolute locations to fit nicely in PDFs and fullscreens
+        # FIXED: Added print-color-adjust properties to guarantee colors render on printed PDFs
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
-        <style>
-          .maplegend {{
-            position: absolute; 
-            z-index: 9999; 
-            border: 2px solid #bbb; 
-            background-color: rgba(255, 255, 255, 0.95);
-            border-radius: 6px; 
-            padding: 8px 12px; 
-            font-size: 12px; 
-            right: 15px; 
-            bottom: 15px; 
-            width: 240px;
-            font-family: "Source Sans Pro", sans-serif; 
-            box-shadow: 0 0 10px rgba(0,0,0,0.15);
-            print-color-adjust: exact; 
-            -webkit-print-color-adjust: exact;
-          }}
-          .legend-title {{
-            font-weight: bold; 
-            margin-bottom: 5px; 
-            text-align: center; 
-            color: #222;
-          }}
-          .gradient-bar {{
-            background: linear-gradient(to right, {css_gradient}) !important; 
-            width: 100%; 
-            height: 14px; 
-            border-radius: 3px; 
-            border: 1px solid #666;
-            print-color-adjust: exact; 
-            -webkit-print-color-adjust: exact;
-          }}
-          .legend-labels {{
-            margin-top: 4px; 
-            font-weight: 600; 
-            color: #444; 
-            display: flex; 
-            justify-content: space-between;
-          }}
-          @media print {{
-            #export-container {{
-              display: none !important; /* Fully hides the button layout during PDF generation */
-            }}
-            .maplegend {{
-              box-shadow: none !important;
-              border: 1px solid #999 !important;
-            }}
-          }}
-        </style>
-
-        <div id='maplegend' class='maplegend'>
-          <div class='legend-title'>
-            Malaria Prevalence (PfPR₂₋₁₀)
+        <div id='maplegend' class='maplegend' 
+            style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95);
+            border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px;
+            font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
+          
+          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
+            Malaria Parasite Rate (PfPR)
           </div>
-          <div class='gradient-bar'></div>
-          <div class='legend-labels'>
-            <span>Low ({v_min})</span>
-            <span>High ({v_max})</span>
+          
+          <div class='gradient-bar' style='
+            background: linear-gradient(to right, {css_gradient}) !important; 
+            width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
+          </div>
+          
+          <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
+            <span>Low Risk ({v_min})</span>
+            <span>High Risk ({v_max})</span>
           </div>
         </div>
 
         <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-          <button onclick="window.print()" style='padding: 5px 10px; background: white; border: 2px solid #ccc; 
-            border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 11px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+          <button onclick="window.print()" style='padding: 6px 12px; background: white; border: 2px solid #ccc; 
+            border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
               📷 Save Map View
           </button>
         </div>
@@ -387,11 +353,4 @@ with prediction_tab:
 
         folium.LayerControl().add_to(f_map)
         map_html = f_map._repr_html_()
-        
-        # CHANGED: Wrapped container inside fixed window dimensions to prevent printing overflow drops
-        responsive_wrapper = f"""
-        <div style="width: 100%; height: 540px; max-width: 100%; margin: 0 auto; box-sizing: border-box; overflow: hidden; border: 1px solid #ddd; border-radius: 4px;">
-            {map_html}
-        </div>
-        """
-        components.html(responsive_wrapper, height=550, scrolling=False)
+        components.html(map_html, height=650, scrolling=True)
