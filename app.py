@@ -79,7 +79,9 @@ with about_tab:
         Users can select the target district (Karagwe or Kyerwa) and surveillance year, after which the 
         application automatically extracts the required environmental data, generates malaria prevalence predictions, 
         and visualizes the results as an interactive map. The predicted PfPR2-10 values are displayed using a 
-        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence.
+        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence. 
+        Once the prediction pipeline is executed, a download link to retrieve the native model outputs as a GeoTIFF 
+        (.tiff) file is provided within the mapping workspace for further spatial analysis.
         
         The prediction model was developed using satellite-derived environmental variables and validated using 
         spatial cross-validation to ensure reliable prediction across different geographical locations. The 
@@ -96,24 +98,6 @@ with about_tab:
         increasing the spatial resolution or predictive accuracy of the model.
         """
     )
-    
-    # Expose the download link inside the About section once predictions have run successfully
-    if st.session_state.map_ready:
-        st.write("---")
-        st.write("### 💾 Export Spatial Products:")
-        try:
-            raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
-                crs="EPSG:4326", 
-                scale=5000
-            ).getDownloadURL({
-                'name': f'PfPR_{st.session_state.target_district}_{st.session_state.target_year}_5km',
-                'scale': 5000,
-                'crs': 'EPSG:4326',
-                'filePerBand': False
-            })
-            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
-        except Exception as e:
-            st.info("The GeoTIFF download link is ready on the prediction tab workspace.")
 
 # ==========================================
 # Tab 2: Prediction Pipeline Workspace
@@ -260,7 +244,8 @@ with prediction_tab:
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
-        # Display Download options directly underneath successful runtime flags
+        # Display Download option strictly at 5km model scale
+        st.write("### 💾 Export Spatial Products:")
         try:
             raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
                 crs="EPSG:4326", 
@@ -273,7 +258,7 @@ with prediction_tab:
             })
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            pass
+            st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
 
         st.write("### Interactive Map Display Tool:")
         
@@ -323,7 +308,6 @@ with prediction_tab:
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        # FIXED: Modified labels to show "Low" and "High" alongside "Malaria Prevalence (PfPR2-10)"
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
         <div id='maplegend' class='maplegend' 
