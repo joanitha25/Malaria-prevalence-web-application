@@ -43,17 +43,14 @@ def load_ml_pipeline():
 model_pipeline = load_ml_pipeline()
 
 # ==========================================
-# 3. Navigation Controls & Session State
+# 3. Main Interface Header Setup
 # ==========================================
 st.set_page_config(page_title="Malaria Prevalence Prediction Tool", layout="wide")
 
-# App Layout Header Customizations
+# App Main Title
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Sidebar navigation menu system
-navigation_tab = st.sidebar.radio("Navigate Workspace:", ["About", "Run Predictions"])
-
-# Initialize session state variables so that map structures persist across tabs
+# Initialize session state variables so data persists across tab switches
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -62,10 +59,13 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = None
     st.session_state.target_district = None
 
+# Create interactive tabs right below the main title instead of using a sidebar
+about_tab, prediction_tab = st.tabs(["About the Application", "Malaria Prevalence Prediction"])
+
 # ==========================================
-# Tab A: About the Application Panel
+# Tab 1: About the Application Panel
 # ==========================================
-if navigation_tab == "About":
+with about_tab:
     st.header("About the Application")
     st.write(
         """
@@ -79,7 +79,9 @@ if navigation_tab == "About":
         Users can select the target district (Karagwe or Kyerwa) and surveillance year, after which the 
         application automatically extracts the required environmental data, generates malaria prevalence predictions, 
         and visualizes the results as an interactive map. The predicted PfPR2-10 values are displayed using a 
-        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence.
+        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence. 
+        Once the prediction pipeline is executed, a download link to retrieve the native model outputs as a GeoTIFF 
+        (.tiff) file is provided within the mapping workspace for further spatial analysis.
         
         The prediction model was developed using satellite-derived environmental variables and validated using 
         spatial cross-validation to ensure reliable prediction across different geographical locations. The 
@@ -98,19 +100,15 @@ if navigation_tab == "About":
     )
 
 # ==========================================
-# Tab B: Predictions Execution Workspace
+# Tab 2: Prediction Pipeline Workspace
 # ==========================================
-elif navigation_tab == "Run Predictions":
-    st.header("Malaria Surveillance Predictive Engine")
-    st.write("Configure processing metrics to pull remote sensing fields from Google Earth Engine.")
-    
-    # Input Selection UI Fields
+with prediction_tab:
+    # User input selection configuration fields
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
     
-    # Updated Trigger Action button layout
     if st.button("Run Predictions"):
-        with st.spinner("Accessing GEE datasets and calculating point prediction targets..."):
+        with st.spinner("Extracting environmental indicators from GEE and executing pipeline..."):
             
             # ------------------------------------------
             # 4. Define Geographic Spatial Boundaries
@@ -234,7 +232,7 @@ elif navigation_tab == "Run Predictions":
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonProjection).clip(aoi_geometry)
                 
-                # Save execution values inside states to hold context layout updates
+                # Assign to state parameters to persist rendering cross tabs
                 st.session_state.pixel_data = pixel_data
                 st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
                 st.session_state.aoi = aoi
@@ -242,17 +240,13 @@ elif navigation_tab == "Run Predictions":
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-   # Render spatial profile map if prediction run completes successfully
+    # Render results dynamically inside this container space
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
-        # ------------------------------------------
-        # 10. Generate Download Link (Strictly Native 5km Model Resolution)
-        # ------------------------------------------
+        # Display Download option strictly at 5km model scale
         st.write("### 💾 Export Spatial Products:")
-        
         try:
-            # Explicitly capture predictions at the true 5km grid scale properties
             raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
                 crs="EPSG:4326", 
                 scale=5000
@@ -264,9 +258,9 @@ elif navigation_tab == "Run Predictions":
             })
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            st.info("Download link setup timed out or payload size constraint hit on remote servers. Use the print snapshot tool below if this persists.")
+            st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
 
-        st.write("### Interactive Map Display Tool:")
+         st.write("### Interactive Map Display Tool:")
         
         import folium
         import streamlit.components.v1 as components
@@ -334,8 +328,8 @@ elif navigation_tab == "Run Predictions":
           </div>
           
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low Risk ({v_min})</span>
-            <span>High Risk ({v_max})</span>
+            <span>Low  ({v_min})</span>
+            <span>High ({v_max})</span>
           </div>
         </div>
 
