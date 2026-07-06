@@ -1,0 +1,9 @@
+# Streamlit secrets file
+.streamlit/secrets.toml
+
+# Local Earth Engine credentials temporary file
+ee_credentials.json
+
+# Python cache directories
+__pycache__/
+*.pyc
