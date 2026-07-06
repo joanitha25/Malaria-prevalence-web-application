@@ -45,7 +45,7 @@ model_pipeline = load_ml_pipeline()
 # ==========================================
 # 3. Main Interface Header Setup
 # ==========================================
-st.set_page_config(page_title="Malaria Prevalence Prediction Tool", layout="wide")
+st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 # App Main Title
 st.title("A Web Application for Malaria Prevalence Prediction")
@@ -260,7 +260,7 @@ with prediction_tab:
         except Exception as export_error:
             st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
 
-        st.write("### Interactive Map Display Tool:")
+        st.write("### Interactive Map Display:")
         
         import folium
         import streamlit.components.v1 as components
