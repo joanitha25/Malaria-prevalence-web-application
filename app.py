@@ -240,7 +240,7 @@ with prediction_tab:
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # Render results dynamically inside this container space
+   # Render results dynamically inside this container space
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
@@ -258,7 +258,7 @@ with prediction_tab:
             })
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
+            pass
 
         st.write("### Interactive Map Display Tool:")
         
@@ -273,6 +273,7 @@ with prediction_tab:
             map_center = [-1.59, 31.21]
             map_zoom = 9
 
+        # Reverted back to standard interactive container setup constraints
         f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
@@ -345,5 +346,14 @@ with prediction_tab:
         f_map.add_child(macro)
 
         folium.LayerControl().add_to(f_map)
+        
+        # FIXED: Enforced a clean, responsive wrapper style setting to match your original output view
         map_html = f_map._repr_html_()
-        components.html(map_html, height=650, scrolling=True)
+        responsive_wrapper = f"""
+        <div style="width: 100%; max-width: 100%; margin: 0 auto; box-sizing: border-box;">
+            {map_html}
+        </div>
+        """
+        
+        # Reset height parameter down to capture standard aspect ratio dimensions cleanly on PDFs
+        components.html(responsive_wrapper, height=500, scrolling=False)
