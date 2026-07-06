@@ -260,7 +260,7 @@ with prediction_tab:
         except Exception as export_error:
             st.info("Download link generation timed out on remote GEE servers. Use the print tool below if this persists.")
 
-         st.write("### Interactive Map Display Tool:")
+        st.write("### Interactive Map Display Tool:")
         
         import folium
         import streamlit.components.v1 as components
@@ -308,7 +308,6 @@ with prediction_tab:
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        # FIXED: Added print-color-adjust properties to guarantee colors render on printed PDFs
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
         <div id='maplegend' class='maplegend' 
@@ -328,7 +327,7 @@ with prediction_tab:
           </div>
           
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low  ({v_min})</span>
+            <span>Low ({v_min})</span>
             <span>High ({v_max})</span>
           </div>
         </div>
