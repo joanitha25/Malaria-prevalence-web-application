@@ -242,36 +242,29 @@ elif navigation_tab == "Run Predictions":
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # Render spatial profile map if prediction run completes successfully
+   # Render spatial profile map if prediction run completes successfully
     if st.session_state.map_ready:
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
         # ------------------------------------------
-        # 10. Generate Download Links (.tiff files)
+        # 10. Generate Download Link (Strictly Native 5km Model Resolution)
         # ------------------------------------------
         st.write("### 💾 Export Spatial Products:")
-        col1, col2 = st.columns(2)
         
         try:
-            # Generate download link for raw 5km raster data
-            raw_download_url = st.session_state.smoothed_prediction_30m.reproject(crs="EPSG:4326", scale=5000).getDownloadURL({
+            # Explicitly capture predictions at the true 5km grid scale properties
+            raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
+                crs="EPSG:4326", 
+                scale=5000
+            ).getDownloadURL({
                 'name': f'PfPR_{st.session_state.target_district}_{st.session_state.target_year}_5km',
                 'scale': 5000,
                 'crs': 'EPSG:4326',
                 'filePerBand': False
             })
-            col1.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
-            
-            # Generate download link for visually smoothed 30m raster mapping layer
-            smoothed_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
-                'name': f'PfPR_{st.session_state.target_district}_{st.session_state.target_year}_resampled_30m',
-                'scale': 30,
-                'crs': 'EPSG:4326',
-                'filePerBand': False
-            })
-            col2.markdown(f"[📥 Download Visual 30m Resampled Raster (.tiff)]({smoothed_download_url})")
+            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception as export_error:
-            st.info("Download link setup timed out or payload size constraint hit on remote servers. Use standard map snapshots if this warning persists.")
+            st.info("Download link setup timed out or payload size constraint hit on remote servers. Use the print snapshot tool below if this persists.")
 
         st.write("### Interactive Map Display Tool:")
         
@@ -321,20 +314,23 @@ elif navigation_tab == "Run Predictions":
         v_max = f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
+        # FIXED: Added print-color-adjust properties to guarantee colors render on printed PDFs
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
         <div id='maplegend' class='maplegend' 
             style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95);
             border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px;
-            font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
+            font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
           
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
             Malaria Parasite Rate (PfPR)
           </div>
           
           <div class='gradient-bar' style='
-            background: linear-gradient(to right, {css_gradient}); 
-            width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'>
+            background: linear-gradient(to right, {css_gradient}) !important; 
+            width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
           </div>
           
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
