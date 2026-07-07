@@ -105,9 +105,13 @@ with about_tab:
 with prediction_tab:
     st.header("Malaria Prevalence Prediction Workspace")
     
+    # Callback function to clear the previous map layout if the inputs change
+    def reset_map_state():
+        st.session_state.map_ready = False
+
     # Keep input fields clearly separated at the top of the workspace tab context
-    target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
-    target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
+    target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025], on_change=reset_map_state)
+    target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"], on_change=reset_map_state)
     
     if st.button("Run Predictions"):
         with st.spinner("Extracting environmental indicators from GEE and executing pipeline..."):
@@ -177,7 +181,7 @@ with prediction_tab:
                 while lat_iter <= max_lat:
                     grid_points.append(ee.Feature(ee.Geometry.Point([lon_iter, lat_iter])))
                     lat_iter += step
-                lat_iter += step
+                lon_iter += step
                 
             raw_grid_collection = ee.FeatureCollection(grid_points)
             grid_samples = raw_grid_collection.filterBounds(aoi)
