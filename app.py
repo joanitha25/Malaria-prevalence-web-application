@@ -103,7 +103,9 @@ with about_tab:
 # Tab 2: Prediction Pipeline Workspace
 # ==========================================
 with prediction_tab:
-    # 1. Place the input selections inside the tab layout
+    st.header("Malaria Prevalence Prediction Workspace")
+    
+    # Keep input fields clearly separated at the top of the workspace tab context
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
     
@@ -175,7 +177,7 @@ with prediction_tab:
                 while lat_iter <= max_lat:
                     grid_points.append(ee.Feature(ee.Geometry.Point([lon_iter, lat_iter])))
                     lat_iter += step
-                lon_iter += step
+                lat_iter += step
                 
             raw_grid_collection = ee.FeatureCollection(grid_points)
             grid_samples = raw_grid_collection.filterBounds(aoi)
@@ -240,9 +242,9 @@ with prediction_tab:
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # CRITICAL FIX: Moved the map display engine inside the prediction tab block
+    # Map display system strictly retained inside the prediction tab context block
     if st.session_state.map_ready:
-        st.write("---")  # Visual separator
+        st.write("---")
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
         # Display Download option strictly at 5km model scale
