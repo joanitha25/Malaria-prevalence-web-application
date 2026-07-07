@@ -50,7 +50,7 @@ st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 # App Main Title
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state variables so data persists across tab switches
+# Initialize session state variables so data persists across view switches
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -59,58 +59,66 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = None
     st.session_state.target_district = None
 
-# Create interactive tabs right below the main title instead of using a sidebar
-about_tab, prediction_tab = st.tabs(["About the Application", "Malaria Prevalence Prediction"])
+# ==========================================
+# EXPLICIT APP NAVIGATION (Replaces st.tabs to prevent DOM bleeding)
+# ==========================================
+current_view = st.radio(
+    label="Navigation Menu",
+    options=["About the Application", "Malaria Prevalence Prediction"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+st.write("---")  # Visual separator below the top navigation bar
 
 # ==========================================
-# Tab 1: About the Application Panel
+# View 1: About the Application Panel
 # ==========================================
-# We wrap the text in an isolated function so it cannot leak into other tab buffers
-def render_about_text():
+if current_view == "About the Application":
     st.header("About the Application")
     st.write(
-        "This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite "
-        "rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables "
-        "and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to "
-        "automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), "
-        "Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, "
-        "and distance to water bodies, for the selected district and year."
+        """
+        This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
+        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
+        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
+        automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
+        Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
+        and distance to water bodies, for the selected district and year.
+        
+        Users can select the target district (Karagwe or Kyerwa) and surveillance year, after which the 
+        application automatically extracts the required environmental data, generates malaria prevalence predictions, 
+        and visualizes the results as an interactive map. The predicted PfPR2-10 values are displayed using a 
+        continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence. 
+        Once the prediction pipeline is executed, a download link to retrieve the native model outputs as a GeoTIFF 
+        (.tiff) file is provided within the mapping workspace for further spatial analysis.
+        
+        The prediction model was developed using satellite-derived environmental variables and validated using 
+        spatial cross-validation to ensure reliable prediction across different geographical locations. The 
+        generated malaria prevalence map is intended to support disease surveillance, environmental risk assessment, 
+        and evidence-based decision-making by identifying areas that may require targeted malaria control interventions.
+        """
     )
-    st.write(
-        "Users can select the target district (Karagwe or Kyerwa) and surveillance year, after which the "
-        "application automatically extracts the required environmental data, generates malaria prevalence predictions, "
-        "and visualizes the results as an interactive map. The predicted PfPR2-10 values are displayed using a "
-        "continuous colour scale, from lower predicted malaria prevalence to higher predicted malaria prevalence. "
-        "Once the prediction pipeline is executed, a download link to retrieve the native model outputs as a GeoTIFF "
-        "(.tiff) file is provided within the mapping workspace for further spatial analysis."
-    )
-    st.write(
-        "The prediction model was developed using satellite-derived environmental variables and validated using "
-        "spatial cross-validation to ensure reliable prediction across different geographical locations. The "
-        "generated malaria prevalence map is intended to support disease surveillance, environmental risk assessment, "
-        "and evidence-based decision-making by identifying areas that may require targeted malaria control interventions."
-    )
+    
     st.warning(
-        "**Important note:**\n\n"
-        "The model generates predictions at the original model resolution (5 km). The displayed 30 m map is "
-        "produced through resampling for visualization purposes only and should not be interpreted as "
-        "increasing the spatial resolution or predictive accuracy of the model."
+        """
+        **Important note:**
+        The model generates predictions at the original model resolution (5 km). The displayed 30 m map is 
+        produced through resampling for visualization purposes only and should not be interpreted as 
+        increasing the spatial resolution or predictive accuracy of the model.
+        """
     )
 
-with about_tab:
-    render_about_text()
-
 # ==========================================
-# Tab 2: Prediction Pipeline Workspace
+# View 2: Prediction Pipeline Workspace
 # ==========================================
-with prediction_tab:
+elif current_view == "Malaria Prevalence Prediction":
     st.header("Malaria Prevalence Prediction Workspace")
     
     # Callback function to clear the previous map layout if the inputs change
     def reset_map_state():
         st.session_state.map_ready = False
 
-    # Keep input fields clearly separated at the top of the workspace tab context
+    # Input fields are isolated inside this layout block
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025], on_change=reset_map_state)
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"], on_change=reset_map_state)
     
@@ -247,7 +255,7 @@ with prediction_tab:
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # Map display system strictly retained inside the prediction tab context block
+    # Map engine display logic executed ONLY when explicitly active inside this workspace scope
     if st.session_state.map_ready:
         st.write("---")
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
