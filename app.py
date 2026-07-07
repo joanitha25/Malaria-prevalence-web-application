@@ -317,7 +317,7 @@ with prediction_tab:
             print-color-adjust: exact; -webkit-print-color-adjust: exact;'>
           
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>
-            Malaria Parasite Rate (PfPR)
+            Malaria Prevalence (PfPR2-10)
           </div>
           
           <div class='gradient-bar' style='
