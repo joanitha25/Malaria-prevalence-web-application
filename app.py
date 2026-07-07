@@ -103,7 +103,7 @@ with about_tab:
 # Tab 2: Prediction Pipeline Workspace
 # ==========================================
 with prediction_tab:
-    # User input selection configuration fields
+    # 1. Place the input selections inside the tab layout
     target_year = st.selectbox("Select Target Surveillance Year", [2020, 2021, 2022, 2023, 2024, 2025])
     target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"])
     
@@ -240,8 +240,9 @@ with prediction_tab:
                 st.session_state.target_district = target_district
                 st.session_state.map_ready = True
 
-    # Render results dynamically inside this container space
+    # CRITICAL FIX: Moved the map display engine inside the prediction tab block
     if st.session_state.map_ready:
+        st.write("---")  # Visual separator
         st.success(f"Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
         # Display Download option strictly at 5km model scale
