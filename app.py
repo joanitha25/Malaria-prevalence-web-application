@@ -46,16 +46,16 @@ st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state variables with default values
+# Initialize session state variables so data persists across view switches safely
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
     st.session_state.pixel_data = None
     st.session_state.aoi = None
-    st.session_state.target_year = 2024
+    st.session_state.target_year = 2026
     st.session_state.target_district = "Karagwe"
 
-# Explicit Navigation System
+# EXPLICIT APP NAVIGATION (Prevents DOM bleeding)
 current_view = st.radio(
     label="Navigation Menu",
     options=["About the Application", "Malaria Prevalence Prediction Workspace"],
@@ -63,10 +63,10 @@ current_view = st.radio(
     label_visibility="collapsed"
 )
 
-st.write("---")
+st.write("---")  # Visual separator
 
 # ==========================================
-# View 1: About Panel
+# View 1: About the Application Panel
 # ==========================================
 if current_view == "About the Application":
     st.header("About the Application")
@@ -79,9 +79,10 @@ if current_view == "About the Application":
         Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
         and distance to water bodies, for the selected district and year.
         
-        Users can select the target district (Karagwe or Kyerwa) and target year—**including forward-looking predictive 
-        horizons out to 2030**. For future horizons, the framework builds a pixel-level baseline climatology proxy from 
-        the historical 2020–2025 era to run predictive simulations.
+        ### Operational Timeline Capabilities:
+        * **Historical Observation (2020–2025):** Extracts observed, completed annual satellite data layers.
+        * **Hybrid Active Prediction (2026):** Dynamically blends actual in-situ observations recorded during the current year with historical baseline trends to capture real-time anomalies.
+        * **Baseline Projection Framework (2027):** Simulates a mid-term risk map using a stable multi-year climatology background to isolate persistent structural transmission hot spots.
         """
     )
     st.warning(
@@ -94,7 +95,7 @@ if current_view == "About the Application":
     )
 
 # ==========================================
-# View 2: Prediction Workspace (Updated)
+# View 2: Prediction Pipeline Workspace
 # ==========================================
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
@@ -102,8 +103,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     def reset_map_state():
         st.session_state.map_ready = False
 
-    # Expanded selectbox to encompass both historical baseline and future projections
-    available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
+    # Restricting scope cleanly to 2020-2027
+    available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
     target_year = st.selectbox(
         "Select Target Surveillance / Projection Year", 
@@ -118,15 +119,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         on_change=reset_map_state
     )
     
+    # Save selections back to state management
     st.session_state.target_year = target_year
     st.session_state.target_district = target_district
 
     if st.button("Run Predictions"):
-        # Alert the user if they are simulating a future projection timeline
-        is_future = st.session_state.target_year > 2025
-        spinner_msg = f"Simulating 2026-2030 projection framework using environmental baselines..." if is_future else "Extracting observed environmental indicators from GEE..."
-        
-        with st.spinner(spinner_msg):
+        with st.spinner("Orchestrating Earth Engine extraction and predictive execution pipeline..."):
             
             # Define Geographic Spatial Boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
@@ -138,14 +136,55 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             pfprScale = 5000
             commonProjection = ee.Projection(commonCRS).atScale(fineScale)
 
+            # Define standard baseline historical parameters (2020 through end of 2025)
+            base_start = ee.Date.fromYMD(2020, 1, 1)
+            base_end = ee.Date.fromYMD(2026, 1, 1)
+
+            # Helper function for generating long-term baseline rain trends
+            years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
+            def get_annual_rain(y):
+                start = ee.Date.fromYMD(y, 1, 1)
+                end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
+                return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+                    .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
+
             # ------------------------------------------------------------
-            # FUTURE PROJECTION LOGIC MODIFICATION BLOCK
+            # DYNAMIC TEMPORAL PIPELINE ROUTING ENGINE
             # ------------------------------------------------------------
-            if is_future:
-                # Build a robust multi-year climatological baseline context proxy
-                base_start = ee.Date.fromYMD(2020, 1, 1)
-                base_end = ee.Date.fromYMD(2026, 1, 1) # Captures up through end of 2025
+            if st.session_state.target_year == 2026:
+                # 1. Gather actual observations compiled in 2026 up to today
+                real_start = ee.Date.fromYMD(2026, 1, 1)
+                real_end = ee.Date('2026-07-10')  # Current date marker
                 
+                s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+                    .filterBounds(aoi_geometry).filterDate(real_start, real_end)\
+                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+                
+                lst_real = ee.ImageCollection("MODIS/061/MOD11A1")\
+                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
+                
+                rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
+                
+                # 2. Gather background baseline arrays (2020-2025)
+                s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+                    .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
+                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+                
+                lst_base = ee.ImageCollection("MODIS/061/MOD11A1")\
+                    .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
+                
+                rain_base = ee.ImageCollection(years_list.map(get_annual_rain)).mean()
+
+                # 3. Formulate Hybrid Composites
+                s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
+                lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
+                
+                # Real-time rainfall accumulated so far + a fractional expectation for the remainder of the year
+                rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
+
+            elif st.session_state.target_year == 2027:
+                # PURE BACKGROUND CLIMATOLOGY PIPELINE
                 s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
@@ -155,19 +194,11 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
                 lst_raw = lst_collection.mean().clip(aoi_geometry)
                 
-                # Annualized precipitation proxy: compute total precipitation per year, then average across the years
-                years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
-                def get_annual_rain(y):
-                    start = ee.Date.fromYMD(y, 1, 1)
-                    end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
-                    return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                        .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
-                
                 annual_rain_collection = ee.ImageCollection(years_list.map(get_annual_rain))
                 rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
                 
             else:
-                # Standard historical observation processing
+                # TRADITIONAL OBSERVED ANNUALLY ISOLATED COVARIATES (2020 - 2025)
                 start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
                 end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1)
                 
@@ -184,7 +215,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
                     .sum().rename("Rainfall").clip(aoi_geometry)
 
-            # Static environmental variables (unaffected by timeline selection)
+            # Compute Spectral Indices & Integrate Static Topography
             ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
             ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
             lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
@@ -194,7 +225,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
             distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
-            # Generate Grid Sampling Layers
+            # Generate Unified Vector Matrix Sample Points
             bounds = aoi_geometry.bounds().getInfo()['coordinates'][0]
             lons, lats = [pt[0] for pt in bounds], [pt[1] for pt in bounds]
             min_lon, max_lon, min_lat, max_lat = min(lons), max(lons), min(lats), max(lats)
@@ -211,7 +242,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
             grid_samples = ee.FeatureCollection(grid_points).filterBounds(aoi)
 
-            # Spatial Extraction & Model Inference Sequence
+            # Extract Stack Vectors 
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
@@ -234,10 +265,11 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 valid_cols = band_names + ["longitude", "latitude"]
                 pixel_data = pixel_data[[col for col in pixel_data.columns if col in valid_cols]].dropna(subset=band_names)
                 
+                # Execute Model Predictions
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # Re-upload prediction to map context canvas
+                # Map Generation and Bilinear Spatial Smoothing
                 predicted_gee_layer = geemap.pandas_to_ee(pixel_data[["longitude", "latitude", "predicted_PfPR"]], latitude="latitude", longitude="longitude")
                 grid_projection = ee.Projection(commonCRS).atScale(pfprScale)
                 
@@ -247,16 +279,19 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=commonProjection).clip(aoi_geometry)
                 
+                # Commit assets to view state
                 st.session_state.pixel_data = pixel_data
                 st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
                 st.session_state.aoi = aoi
                 st.session_state.map_ready = True
 
-    # Visual Presentation Block
+    # Render Phase
     if st.session_state.map_ready:
         st.write("---")
-        if st.session_state.target_year > 2025:
-            st.info(f"🔮 Displaying Risk Projections for Year {st.session_state.target_year} based on baseline climatology indices.")
+        if st.session_state.target_year == 2026:
+            st.info("📊 Displaying active hybrid model: Integrates real-time 2026 observations with predictive baseline models.")
+        elif st.session_state.target_year == 2027:
+            st.warning("🔮 Displaying projected structural malaria risk framework modeled for the 2027 climatology horizon.")
         else:
             st.success(f"✅ Successfully processed {st.session_state.target_district} District for {st.session_state.target_year}!")
         
@@ -265,12 +300,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             raw_download_url = st.session_state.smoothed_prediction_30m.reproject(
                 crs="EPSG:4326", scale=5000
             ).getDownloadURL({
-                'name': f'PfPR_Projected_{st.session_state.target_district}_{st.session_state.target_year}_5km',
+                'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}_5km',
                 'scale': 5000, 'crs': 'EPSG:4326', 'filePerBand': False
             })
-            st.markdown(f"[📥 Download Predicted 5km Raster (.tiff)]({raw_download_url})")
+            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception:
-            st.info("Download package timeout on remote servers. Please use local screenshot assets.")
+            st.info("Download link generation timed out on remote GEE servers.")
 
         st.write("### Interactive Map Display:")
         
@@ -294,7 +329,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
         folium.TileLayer(
             tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'Predicted Risk ({st.session_state.target_year})', overlay=True, opacity=0.85
+            name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
@@ -303,7 +338,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
-          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Projected Malaria Risk (PfPR2-10)</div>
+          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
           <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
             <span>Low ({v_min})</span><span>High ({v_max})</span>
