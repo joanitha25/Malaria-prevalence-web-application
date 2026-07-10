@@ -25,7 +25,7 @@ def load_ml_pipeline():
 model_pipeline = load_ml_pipeline()
 
 def reconstruct_raw_stack(target_district, target_year):
-    """Reconstructs environmental raw_stack using pure server-side expressions to protect JSON serializability."""
+    """Reconstructs environmental raw_stack using pure server-side expressions."""
     districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
     aoi = districts.filter(ee.Filter.eq("ADM2_NAME", target_district))
     aoi_geometry = aoi.geometry()
@@ -45,13 +45,12 @@ def reconstruct_raw_stack(target_district, target_year):
         s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(base_start, base_end).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
         lst_base = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
         
-        # FIXED: Replacing lambda mappings with standard server-side CHIRPS group collections
         rain_base = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
             .filterBounds(aoi_geometry)\
             .filterDate(base_start, base_end)\
             .select("precipitation")\
             .sum()\
-            .divide(6.0) # Average over the 6 historical reference years
+            .divide(6.0)
 
         s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
         lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
@@ -94,7 +93,7 @@ except Exception as e:
     st.error(f"Earth Engine Authentication Failed. Error details: {e}")
 
 # ==============================================================================
-# 3. MAIN INTERFACE HEADER SETUP
+# 3. MAIN INTERFACE SETUP
 # ==============================================================================
 st.title("A Web Application for Malaria Prevalence Prediction")
 
@@ -118,13 +117,7 @@ st.write("---")
 
 if current_view == "About the Application":
     st.header("About the Application")
-    st.write(
-        """
-        This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
-        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
-        and a trained Random Forest machine learning model.
-        """
-    )
+    st.write("This web application provides an automated platform for predicting malaria prevalence mapping parameters.")
 
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
@@ -134,18 +127,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
     available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
-    target_year = st.selectbox(
-        "Select Target Surveillance / Projection Year", 
-        available_years, 
-        index=available_years.index(st.session_state.target_year),
-        on_change=reset_map_state
-    )
-    target_district = st.selectbox(
-        "Select Target District", 
-        ["Karagwe", "Kyerwa"], 
-        index=["Karagwe", "Kyerwa"].index(st.session_state.target_district),
-        on_change=reset_map_state
-    )
+    target_year = st.selectbox("Select Target Surveillance / Projection Year", available_years, index=available_years.index(st.session_state.target_year), on_change=reset_map_state)
+    target_district = st.selectbox("Select Target District", ["Karagwe", "Kyerwa"], index=["Karagwe", "Kyerwa"].index(st.session_state.target_district), on_change=reset_map_state)
     
     st.session_state.target_year = target_year
     st.session_state.target_district = target_district
@@ -169,7 +152,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             if not pixel_data.empty:
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(pixel_data[band_names])
-                
                 st.session_state.min_val = float(pixel_data["predicted_PfPR"].min())
                 st.session_state.max_val = float(pixel_data["predicted_PfPR"].max())
                 
@@ -183,14 +165,18 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=ee.Projection("EPSG:4326").atScale(30)).clip(aoi_geometry)
                 
-                # Fetch plain string maps token URLs
+                # SANITIZATION: Force conversion to standard python string primitives to drop all GEE proxy attachments
                 high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
-                st.session_state.aoi_tile_url = ee.Image().paint(aoi, 0, 2).getMapId()['tile_fetcher'].url_format
-                st.session_state.pred_tile_url = smoothed_prediction_30m.getMapId({'min': st.session_state.min_val, 'max': st.session_state.max_val, 'palette': high_contrast_palette})['tile_fetcher'].url_format
+                
+                aoi_map_id = ee.Image().paint(aoi, 0, 2).getMapId()
+                pred_map_id = smoothed_prediction_30m.getMapId({'min': st.session_state.min_val, 'max': st.session_state.max_val, 'palette': high_contrast_palette})
+                
+                st.session_state.aoi_tile_url = str(aoi_map_id['tile_fetcher'].url_format)
+                st.session_state.pred_tile_url = str(pred_map_id['tile_fetcher'].url_format)
                 st.session_state.map_ready = True
 
     # ==============================================================================
-    # 4. RENDERING INTERACTIVE WORKSPACE MAP ELEMENTS
+    # 4. RENDERING WORKSPACE ELEMENTS
     # ==============================================================================
     if st.session_state.map_ready:
         st.write("---")
@@ -204,6 +190,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
             f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
             
+            # Using clean primitive string fields safely avoids the MarshallComponentException
             folium.TileLayer(
                 tiles=st.session_state.aoi_tile_url, attr='Google Earth Engine',
                 name=f'{st.session_state.target_district} Border', overlay=True
@@ -216,7 +203,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             folium.LayerControl().add_to(f_map)
 
-            # Guaranteed safe call since f_map contains ONLY native strings now
             map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
 
         with col2:
@@ -272,4 +258,4 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     except Exception as err:
                         st.error(f"Error extracting point features: {err}")
             else:
-                st.write("Click any location inside the district bounds to view raw model inputs and custom coordinates.")
+                st.write("Click any location inside the district bounds to view raw model inputs.")
