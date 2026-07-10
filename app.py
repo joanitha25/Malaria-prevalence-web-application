@@ -11,14 +11,23 @@ import folium
 import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
 
-# ==========================================
-# 0. Configuration Setup (MUST BE ABSOLUTE FIRST 'ST' COMMAND)
-# ==========================================
+# ==============================================================================
+# 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
+# ==============================================================================
 st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
-# ==========================================
-# 1. Earth Engine Authentication Setup
-# ==========================================
+# ==============================================================================
+# 1. MODEL LOADING (Cached)
+# ==============================================================================
+@st.cache_resource
+def load_ml_pipeline():
+    return joblib.load("best_rf_reduced_model.joblib")
+
+model_pipeline = load_ml_pipeline()
+
+# ==============================================================================
+# 2. EARTH ENGINE AUTHENTICATION SETUP
+# ==============================================================================
 try:
     b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
     decoded_bytes = base64.b64decode(b64_credentials)
@@ -34,15 +43,6 @@ try:
     
 except Exception as e:
     st.error(f"Earth Engine Authentication Failed. Error details: {e}")
-
-# ==========================================
-# 2. Model Loading (Cached)
-# ==========================================
-@st.cache_resource
-def load_ml_pipeline():
-    return joblib.load("best_rf_reduced_model.joblib")
-
-model_pipeline = load_ml_pipeline()
 
 # ==========================================
 # 3. Main Interface Header Setup
