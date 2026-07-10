@@ -1,7 +1,7 @@
 import sys
 import subprocess
 
-# 1. Natively auto-install heavy ML dependencies at runtime using pre-compiled wheels
+# Auto-install dependencies sequentially to prevent container memory exhaustion
 try:
     import joblib
     import sklearn
@@ -11,16 +11,20 @@ try:
     import ee
     import folium
 except ModuleNotFoundError:
-    subprocess.check_call([
-        sys.executable, "-m", "pip", "install", "--no-cache-dir",
-        "joblib", "numpy", "pandas", "earthengine-api", "folium", 
-        "branca", "scikit-learn", "xgboost"
-    ])
-    # Import streamlit natively here to safely invoke the rerun trigger
+    # Core packages first
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "joblib", "numpy", "pandas"])
+    
+    # Mapping packages next
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "earthengine-api", "folium", "branca"])
+    
+    # Heavy ML packages LAST, forcing pre-compiled binaries only to save RAM
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "--only-binary=:all:", "scikit-learn", "xgboost"])
+    
+    # Safe runtime reload trigger
     import streamlit as st
     st.rerun()
 
-# 2. Regular imports can now continue safely
+# Regular imports continue safely below...
 import streamlit as st
 import json
 import os
