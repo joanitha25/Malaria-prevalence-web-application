@@ -45,7 +45,6 @@ st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state variables
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -54,7 +53,6 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = 2026
     st.session_state.target_district = "Karagwe"
 
-# EXPLICIT APP NAVIGATION
 current_view = st.radio(
     label="Navigation Menu",
     options=["About the Application", "Malaria Prevalence Prediction Workspace"],
@@ -65,18 +63,14 @@ current_view = st.radio(
 st.write("---")
 
 # ==========================================
-# View 1: About the Application Panel
+# View 1: About Panel
 # ==========================================
 if current_view == "About the Application":
     st.header("About the Application")
     st.write(
         """
         This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
-        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
-        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
-        automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
-        Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
-        and distance to water bodies, for the selected district and year.
+        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables.
         
         ### Operational Timeline Capabilities:
         * **Historical Observation (2020–2025):** Extracts observed, completed annual satellite data layers.
@@ -84,17 +78,9 @@ if current_view == "About the Application":
         * **Baseline Projection Framework (2027):** Simulates a mid-term risk map using a stable multi-year climatology background to isolate persistent structural transmission hot spots.
         """
     )
-    st.warning(
-        """
-        **Important note:**
-        The model generates predictions at the original model resolution (5 km). The displayed 30 m map is 
-        produced through resampling for visualization purposes only and should not be interpreted as 
-        increasing the spatial resolution or predictive accuracy of the model.
-        """
-    )
 
 # ==========================================
-# View 2: Prediction Pipeline Workspace
+# View 2: Prediction Workspace
 # ==========================================
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
@@ -121,9 +107,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     st.session_state.target_district = target_district
 
     if st.button("Run Predictions"):
-        with st.spinner("Orchestrating Earth Engine extraction and predictive execution pipeline..."):
+        with st.spinner("Executing memory-optimized spatial prediction sequence..."):
             
-            # Define Geographic Spatial Boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
             aoi_geometry = aoi.geometry()
@@ -144,7 +129,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
 
             # ------------------------------------------------------------
-            # TEMPORAL PIPELINE ROUTING
+            # TEMPORAL ROUTING
             # ------------------------------------------------------------
             if st.session_state.target_year == 2026:
                 real_start = ee.Date.fromYMD(2026, 1, 1)
@@ -203,7 +188,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
                     .sum().rename("Rainfall").clip(aoi_geometry)
 
-            # Spatial Indices & Static Layers
             ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
             ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
             lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
@@ -213,10 +197,13 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
             distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
-            # Grid generation
-            bounds = aoi_geometry.bounds().getInfo()['coordinates'][0]
-            lons, lats = [pt[0] for pt in bounds], [pt[1] for pt in bounds]
-            min_lon, max_lon, min_lat, max_lat = min(lons), max(lons), min(lats), max(lats)
+            # ------------------------------------------------------------
+            # OPTIMIZATION: HARDCODED BOUNDING BOXES (REMOVED .getInfo() MEMORY LEAK)
+            # ------------------------------------------------------------
+            if st.session_state.target_district == "Kyerwa":
+                min_lon, max_lon, min_lat, max_lat = 30.39, 31.05, -1.58, -1.02
+            else:  # Karagwe
+                min_lon, max_lon, min_lat, max_lat = 30.45, 31.42, -2.03, -1.29
             
             step = pfprScale / 111000.0
             grid_points = []
@@ -252,13 +239,9 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 valid_cols = band_names + ["longitude", "latitude"]
                 pixel_data = pixel_data[[col for col in pixel_data.columns if col in valid_cols]].dropna(subset=band_names)
                 
-                # Inference
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # ------------------------------------------------------------
-                # FIX: NATIVE EARTH ENGINE CONVERSION (REMOVED GEEMAP DEEPENDENCY)
-                # ------------------------------------------------------------
                 ee_features = []
                 for _, row in pixel_data.iterrows():
                     geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
@@ -279,7 +262,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.session_state.aoi = aoi
                 st.session_state.map_ready = True
 
-    # Presentation View
+    # Presentation Layer
     if st.session_state.map_ready:
         st.write("---")
         if st.session_state.target_year == 2026:
