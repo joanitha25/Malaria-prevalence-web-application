@@ -1,30 +1,37 @@
 import sys
 import subprocess
 
-# Auto-install dependencies if missing from the active environment
+# 1. Natively auto-install heavy ML dependencies at runtime using pre-compiled wheels
 try:
     import joblib
     import sklearn
     import xgboost
+    import pandas as pd
+    import numpy as np
+    import ee
+    import folium
 except ModuleNotFoundError:
     subprocess.check_call([
         sys.executable, "-m", "pip", "install", "--no-cache-dir",
         "joblib", "numpy", "pandas", "earthengine-api", "folium", 
-        "branca", "scikit-learn==1.6.1", "xgboost", "streamlit"
+        "branca", "scikit-learn", "xgboost"
     ])
+    # Import streamlit natively here to safely invoke the rerun trigger
+    import streamlit as st
     st.rerun()
 
+# 2. Regular imports can now continue safely
 import streamlit as st
-import joblib
 import json
-import numpy as np
-import pandas as pd
-import ee
 import os
 import base64
-import folium
 import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
+
+# ==========================================
+# 1. Earth Engine Authentication Setup
+# ==========================================
+# ... (Keep the rest of your original code completely unchanged!)
 
 # ==========================================
 # 1. Earth Engine Authentication Setup
