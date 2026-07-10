@@ -1,36 +1,20 @@
-import sys
-import subprocess
-
-# Auto-install dependencies sequentially to prevent container memory exhaustion
-try:
-    import joblib
-    import sklearn
-    import xgboost
-    import pandas as pd
-    import numpy as np
-    import ee
-    import folium
-except ModuleNotFoundError:
-    # Core packages first
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "joblib", "numpy", "pandas"])
-    
-    # Mapping packages next
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "earthengine-api", "folium", "branca"])
-    
-    # Heavy ML packages LAST, forcing pre-compiled binaries only to save RAM
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "--only-binary=:all:", "scikit-learn", "xgboost"])
-    
-    # Safe runtime reload trigger
-    import streamlit as st
-    st.rerun()
-
-# Regular imports continue safely below...
 import streamlit as st
+import sys
+import joblib
 import json
+import numpy as np
+import pandas as pd
+import ee
 import os
 import base64
+import folium
 import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
+
+# ==========================================
+# 1. Earth Engine Authentication Setup
+# ==========================================
+# ... the rest of your app code stays exactly as it was
 
 # ==========================================
 # 1. Earth Engine Authentication Setup
