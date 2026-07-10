@@ -313,30 +313,30 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
             ).add_to(f_map)
             
-            v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
-            css_gradient = ", ".join(high_contrast_palette)
-
-            # Map Legend Overlay HTML Macro Configuration
-            legend_template = f"""
-            {{% macro html(this, kwargs) %}}
-            <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 230px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
-              <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-              <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
-              <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-                <span>Low ({v_min})</span><span>High ({v_max})</span>
-              </div>
-            </div>
-            {{% endmacro %}}
-            """
-            macro = MacroElement()
-            macro._template = Template(legend_template)
-            f_map.add_child(macro)
             folium.LayerControl().add_to(f_map)
 
+            # NOTE: MacroElement removed here to prevent MarshallComponentException!
             # Render map with bi-directional click tracking component active
             map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
 
         with col2:
+            # Render the Legend beautifully as a native Streamlit component right above the Inspector
+            v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
+            css_gradient = ", ".join(high_contrast_palette)
+            
+            st.markdown(
+                f"""
+                <div style='border:1px solid #ddd; background-color:#f9f9f9; border-radius:8px; padding: 12px 15px; font-size:14px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);'>
+                  <div style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
+                  <div style='background: linear-gradient(to right, {css_gradient}); width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+                  <div style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
+                    <span>Low ({v_min})</span><span>High ({v_max})</span>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
             st.subheader("📍 Point Inspector")
             
             # Catch the click parameters returned from the map interface element
