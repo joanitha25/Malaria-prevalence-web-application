@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-echo "Bypassing uv and forcing standard pip installation..."
-pip install --no-cache-dir -r pinned-requirements.txt
+echo "Targeting Streamlit virtual environment using standard pip..."
+/home/adminuser/venv/bin/pip install --no-cache-dir -r pinned-requirements.txt
