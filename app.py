@@ -18,13 +18,20 @@ from streamlit_folium import st_folium  # Imported for interactive point selecti
 st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 # ==============================================================================
-# 1. MODEL LOADING (Cached)
+# GLOBAL HELPER FUNCTIONS (Moved out of local blocks to fix Serialization Errors)
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
     return joblib.load("best_rf_reduced_model.joblib")
 
 model_pipeline = load_ml_pipeline()
+
+def get_annual_rain(y, aoi_geometry):
+    """Calculates annual precipitation sum for a given year and boundary geometry."""
+    start = ee.Date.fromYMD(y, 1, 1)
+    end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
+    return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+        .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
 
 # ==============================================================================
 # 2. EARTH ENGINE AUTHENTICATION SETUP
@@ -132,12 +139,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             base_start = ee.Date.fromYMD(2020, 1, 1)
             base_end = ee.Date.fromYMD(2026, 1, 1)
             years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
-            
-            def get_annual_rain(y):
-                start = ee.Date.fromYMD(y, 1, 1)
-                end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
-                return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
 
             # ------------------------------------------------------------
             # TEMPORAL DISPATCH ROUTER
@@ -159,7 +160,9 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
                 lst_base = ee.ImageCollection("MODIS/061/MOD11A1")\
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                rain_base = ee.ImageCollection(years_list.map(get_annual_rain)).mean()
+                
+                # Pass explicit aoi_geometry parameter to global function scope
+                rain_base = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry))).mean()
 
                 s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
                 lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
@@ -175,7 +178,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
                 lst_raw = lst_collection.mean().clip(aoi_geometry)
                 
-                annual_rain_collection = ee.ImageCollection(years_list.map(get_annual_rain))
+                annual_rain_collection = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry)))
                 rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
                 
             else:
@@ -252,8 +255,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .reproject(crs=commonProjection)\
                     .clip(aoi_geometry)
                 
-                # Cache parameters to local session memory for interface extraction
-                st.session_state.raw_stack_bands = raw_stack
+                # Store structural variables and explicit strings in session state
+                st.session_state.raw_stack_id = raw_stack.serialize() # Serialize GEE object specifically
                 st.session_state.band_names_list = band_names
                 st.session_state.common_crs_str = commonCRS
                 st.session_state.pixel_data = pixel_data
@@ -315,12 +318,11 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             folium.LayerControl().add_to(f_map)
 
-            # NOTE: MacroElement removed here to prevent MarshallComponentException!
             # Render map with bi-directional click tracking component active
             map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
 
         with col2:
-            # Render the Legend beautifully as a native Streamlit component right above the Inspector
+            # Render Legend as native HTML block
             v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
             css_gradient = ", ".join(high_contrast_palette)
             
@@ -339,7 +341,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
             st.subheader("📍 Point Inspector")
             
-            # Catch the click parameters returned from the map interface element
+            # Catch click parameters
             if map_data and map_data.get("last_clicked"):
                 clicked_lat = map_data["last_clicked"]["lat"]
                 clicked_lng = map_data["last_clicked"]["lng"]
@@ -350,8 +352,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     try:
                         inspect_point = ee.Geometry.Point([clicked_lng, clicked_lat])
                         
-                        # Sample raw data bands at clicked coordinate space location
-                        point_sample = st.session_state.raw_stack_bands.sample(
+                        # Deserialize the stack safely for pixel extraction
+                        current_stack = ee.Deserializer.deserialize(st.session_state.raw_stack_id)
+                        
+                        point_sample = current_stack.sample(
                             region=inspect_point,
                             scale=30,
                             projection=st.session_state.common_crs_str,
@@ -361,10 +365,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                         if point_sample and len(point_sample['features']) > 0:
                             extracted_props = point_sample['features'][0]['properties']
                             
-                            # Align variables with prediction pipeline structure rules
                             input_df = pd.DataFrame([extracted_props])[st.session_state.band_names_list]
-                            
-                            # Run local target area custom prediction matrix calculation
                             point_prediction = model_pipeline.predict(input_df)[0]
                             
                             st.metric(
