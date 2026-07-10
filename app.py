@@ -44,11 +44,9 @@ try:
 except Exception as e:
     st.error(f"Earth Engine Authentication Failed. Error details: {e}")
 
-# ==========================================
-# 3. Main Interface Header Setup
-# ==========================================
-st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
-
+# ==============================================================================
+# 3. MAIN INTERFACE HEADER SETUP
+# ==============================================================================
 st.title("A Web Application for Malaria Prevalence Prediction")
 
 # Initialize session state variables with default values
