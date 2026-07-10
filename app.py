@@ -8,9 +8,8 @@ import ee
 import os
 import base64
 import folium
-import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
-from streamlit_folium import st_folium  # Imported for interactive point selection
+from streamlit_folium import st_folium
 
 # ==============================================================================
 # 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
@@ -18,7 +17,7 @@ from streamlit_folium import st_folium  # Imported for interactive point selecti
 st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 # ==============================================================================
-# GLOBAL HELPER FUNCTIONS (Moved out of local blocks to fix Serialization Errors)
+# 1. CACHED GLOBAL ASSETS & PURE UTILITY FUNCTIONS
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
@@ -32,6 +31,80 @@ def get_annual_rain(y, aoi_geometry):
     end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
     return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
         .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
+
+def reconstruct_raw_stack(target_district, target_year):
+    """Reconstructs the pure environmental raw_stack image on demand without state tracking side-effects."""
+    districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+    aoi = districts.filter(ee.Filter.eq("ADM2_NAME", target_district))
+    aoi_geometry = aoi.geometry()
+    
+    current_year = 2026
+    base_start = ee.Date.fromYMD(2020, 1, 1)
+    base_end = ee.Date.fromYMD(2026, 1, 1)
+    years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
+    
+    if target_year == current_year:
+        real_start = ee.Date.fromYMD(current_year, 1, 1)
+        real_end = ee.Date('2026-07-10')
+        
+        s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+            .filterBounds(aoi_geometry).filterDate(real_start, real_end)\
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+        lst_real = ee.ImageCollection("MODIS/061/MOD11A1")\
+            .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
+        rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+            .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
+        
+        s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+            .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+        lst_base = ee.ImageCollection("MODIS/061/MOD11A1")\
+            .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
+        
+        rain_base = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry))).mean()
+
+        s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
+        lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
+        rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
+
+    elif target_year > current_year:
+        s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+            .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+        s2 = s2Collection.median().clip(aoi_geometry)
+        
+        lst_collection = ee.ImageCollection("MODIS/061/MOD11A1")\
+            .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
+        lst_raw = lst_collection.mean().clip(aoi_geometry)
+        
+        annual_rain_collection = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry)))
+        rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
+        
+    else:
+        start_date = ee.Date.fromYMD(target_year, 1, 1)
+        end_date = ee.Date.fromYMD(target_year + 1, 1, 1)
+        
+        s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+            .filterBounds(aoi_geometry).filterDate(start_date, end_date)\
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])\
+            .median().clip(aoi_geometry)
+        lst_raw = ee.ImageCollection("MODIS/061/MOD11A1")\
+            .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("LST_Day_1km")\
+            .mean().clip(aoi_geometry)
+        rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+            .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
+            .sum().rename("Rainfall").clip(aoi_geometry)
+
+    ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
+    ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+    lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
+    elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
+    
+    water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
+    water5km = water.reproject(crs="EPSG:4326", scale=5000).unmask(0)
+    distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(5000).rename("DistWater").clip(aoi_geometry)
+
+    return ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
 # ==============================================================================
 # 2. EARTH ENGINE AUTHENTICATION SETUP
@@ -57,16 +130,14 @@ except Exception as e:
 # ==============================================================================
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state variables with default values
+# Initialize session state variables with pure native data types
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
-    st.session_state.smoothed_prediction_30m = None
-    st.session_state.pixel_data = None
-    st.session_state.aoi = None
     st.session_state.target_year = 2026
     st.session_state.target_district = "Karagwe"
+    st.session_state.min_val = 0.0
+    st.session_state.max_val = 100.0
 
-# Explicit Navigation System
 current_view = st.radio(
     label="Navigation Menu",
     options=["About the Application", "Malaria Prevalence Prediction Workspace"],
@@ -76,25 +147,16 @@ current_view = st.radio(
 
 st.write("---")
 
-# ==========================================
-# View 1: About Panel
-# ==========================================
 if current_view == "About the Application":
     st.header("About the Application")
     st.write(
         """
         This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
         rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
-        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
-        automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
-        Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
-        and distance to water bodies, for the selected district and year.
+        and a trained Random Forest machine learning model.
         """
     )
 
-# ==========================================
-# View 2: Prediction Workspace
-# ==========================================
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
     
@@ -120,109 +182,20 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     st.session_state.target_district = target_district
 
     if st.button("Run Predictions"):
-        current_year = 2026
-        spinner_msg = "Extracting spatial diagnostics from Google Earth Engine..."
-            
-        with st.spinner(spinner_msg):
-            
-            # Define Geographic Spatial Boundaries
+        with st.spinner("Extracting spatial diagnostics from Google Earth Engine..."):
+            # Pull clean image stack boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
             aoi_geometry = aoi.geometry()
             
-            commonCRS = "EPSG:4326"
-            fineScale = 30
-            pfprScale = 5000
-            commonProjection = ee.Projection(commonCRS).atScale(fineScale)
-
-            # Establish historical baseline dates
-            base_start = ee.Date.fromYMD(2020, 1, 1)
-            base_end = ee.Date.fromYMD(2026, 1, 1)
-            years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
-
-            # ------------------------------------------------------------
-            # TEMPORAL DISPATCH ROUTER
-            # ------------------------------------------------------------
-            if st.session_state.target_year == current_year:
-                real_start = ee.Date.fromYMD(current_year, 1, 1)
-                real_end = ee.Date('2026-07-10')
-                
-                s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_real = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
-                rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
-                
-                s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_base = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                
-                # Pass explicit aoi_geometry parameter to global function scope
-                rain_base = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry))).mean()
-
-                s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
-                rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
-
-            elif st.session_state.target_year > current_year:
-                s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                s2 = s2Collection.median().clip(aoi_geometry)
-                
-                lst_collection = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                lst_raw = lst_collection.mean().clip(aoi_geometry)
-                
-                annual_rain_collection = ee.ImageCollection(years_list.map(lambda y: get_annual_rain(y, aoi_geometry)))
-                rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
-                
-            else:
-                start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
-                end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1)
-                
-                s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])\
-                    .median().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("LST_Day_1km")\
-                    .mean().clip(aoi_geometry)
-                rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
-                    .sum().rename("Rainfall").clip(aoi_geometry)
-
-            # Feature Layer Synthesizer
-            ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
-            ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
-            lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
-            elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
-            
-            water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
-            water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
-            distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
-
+            raw_stack = reconstruct_raw_stack(st.session_state.target_district, st.session_state.target_year)
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
-            raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
-
-            # ==================================================================
-            # ROBUST SERVER-SIDE SAMPLING 
-            # ==================================================================
+            
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             data_and_coords = raw_stack.addBands(lonlat_image)
             
             sampling_features = data_and_coords.sample(
-                region=aoi_geometry,
-                scale=4500,  
-                projection=commonCRS,
-                factor=None,
-                numPixels=None,
-                geometries=True,
-                tileScale=4
+                region=aoi_geometry, scale=4500, projection="EPSG:4326", tileScale=4
             ).getInfo()
 
             features_list = []
@@ -238,79 +211,67 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                ee_features = []
-                for _, row in pixel_data.iterrows():
-                    geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
-                    feat = ee.Feature(geom, {"predicted_PfPR": float(row["predicted_PfPR"])})
-                    ee_features.append(feat)
-                
-                predicted_gee_layer = ee.FeatureCollection(ee_features)
-                grid_projection = ee.Projection(commonCRS).atScale(pfprScale)
-                
-                prediction_raster_5km = predicted_gee_layer.reduceToImage(
-                    properties=["predicted_PfPR"], reducer=ee.Reducer.mean()
-                ).reproject(crs=grid_projection)
-                
-                smoothed_prediction_30m = prediction_raster_5km.resample('bilinear')\
-                    .reproject(crs=commonProjection)\
-                    .clip(aoi_geometry)
-                
-                # Store structural variables and explicit strings in session state
-                st.session_state.raw_stack_id = raw_stack.serialize() # Serialize GEE object specifically
-                st.session_state.band_names_list = band_names
-                st.session_state.common_crs_str = commonCRS
-                st.session_state.pixel_data = pixel_data
-                st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
-                st.session_state.aoi = aoi
+                st.session_state.min_val = float(pixel_data["predicted_PfPR"].min())
+                st.session_state.max_val = float(pixel_data["predicted_PfPR"].max())
                 st.session_state.map_ready = True
 
     # ==============================================================================
-    # Rendering Screen Elements (Inside Workspace View)
+    # 4. RENDERING INTERACTIVE WORKSPACE MAP ELEMENTS
     # ==============================================================================
     if st.session_state.map_ready:
         st.write("---")
         st.success(f"✅ Full predictive grid generated successfully for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # 💾 Export Spatial Products Code block
-        st.write("### 💾 Export Spatial Products:")
-        try:
-            raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
-                'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}',
-                'scale': 5000, 
-                'crs': 'EPSG:4326', 
-                'filePerBand': False
-            })
-            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
-        except Exception:
-            st.info("Download link generation timed out on remote GEE servers.")
-            
-        st.write("---")
-        st.write("### 🗺️ Interactive Analysis Workspace")
-        st.caption("💡 Click anywhere inside the mapped district border to inspect local environmental predictors and model output.")
+        # Build Map Assets locally inside calculation cycle
+        districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+        aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
+        aoi_geometry = aoi.geometry()
+        
+        raw_stack = reconstruct_raw_stack(st.session_state.target_district, st.session_state.target_year)
+        band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
+        
+        # Build prediction raster objects on demand
+        lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
+        sampling_features = raw_stack.addBands(lonlat_image).sample(
+            region=aoi_geometry, scale=4500, projection="EPSG:4326", tileScale=4
+        ).getInfo()
+        
+        features_list = [f["properties"] for f in sampling_features["features"] if "longitude" in f["properties"]]
+        pixel_data = pd.DataFrame(features_list).dropna(subset=band_names)
+        pixel_data["predicted_PfPR"] = model_pipeline.predict(pixel_data[band_names])
+        
+        ee_features = [
+            ee.Feature(ee.Geometry.Point([r["longitude"], r["latitude"]]), {"predicted_PfPR": float(r["predicted_PfPR"])})
+            for _, r in pixel_data.iterrows()
+        ]
+        
+        prediction_raster_5km = ee.FeatureCollection(ee_features).reduceToImage(
+            properties=["predicted_PfPR"], reducer=ee.Reducer.mean()
+        ).reproject(crs=ee.Projection("EPSG:4326").atScale(5000))
+        
+        smoothed_prediction_30m = prediction_raster_5km.resample('bilinear')\
+            .reproject(crs=ee.Projection("EPSG:4326").atScale(30))\
+            .clip(aoi_geometry)
 
-        # Create a side-by-side split layout panel
+        # Split Layout Screen view
         col1, col2 = st.columns([3, 1.5])
 
         with col1:
-            # 🗺️ Build the Base Folium Map Asset
             map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
             map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
 
             f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
             
-            aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
+            aoi_map_id = ee.Image().paint(aoi, 0, 2).getMapId()
             folium.TileLayer(
                 tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
                 name=f'{st.session_state.target_district} Border', overlay=True
             ).add_to(f_map)
             
-            min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
-            max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
-            
             high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
-            vis_params = {'min': min_val, 'max': max_val, 'palette': high_contrast_palette}
+            vis_params = {'min': st.session_state.min_val, 'max': st.session_state.max_val, 'palette': high_contrast_palette}
             
-            prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
+            prediction_map_id = smoothed_prediction_30m.getMapId(vis_params)
             folium.TileLayer(
                 tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
                 name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
@@ -318,12 +279,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             folium.LayerControl().add_to(f_map)
 
-            # Render map with bi-directional click tracking component active
+            # Standard clean folium map call (safe for conversion)
             map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
 
         with col2:
-            # Render Legend as native HTML block
-            v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
+            # Render Legend Block natively in Streamlit
+            v_min, v_max = f"{st.session_state.min_val:.1f}%", f"{st.session_state.max_val:.1f}%"
             css_gradient = ", ".join(high_contrast_palette)
             
             st.markdown(
@@ -341,38 +302,25 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
             st.subheader("📍 Point Inspector")
             
-            # Catch click parameters
             if map_data and map_data.get("last_clicked"):
                 clicked_lat = map_data["last_clicked"]["lat"]
                 clicked_lng = map_data["last_clicked"]["lng"]
                 
                 st.info(f"**Selected Coordinates:**\n* **Lat:** `{clicked_lat:.5f}`\n* **Lon:** `{clicked_lng:.5f}`")
                 
-                with st.spinner("Extracting pixel attributes from GEE layers..."):
+                with st.spinner("Extracting pixel attributes..."):
                     try:
                         inspect_point = ee.Geometry.Point([clicked_lng, clicked_lat])
-                        
-                        # Deserialize the stack safely for pixel extraction
-                        current_stack = ee.Deserializer.deserialize(st.session_state.raw_stack_id)
-                        
-                        point_sample = current_stack.sample(
-                            region=inspect_point,
-                            scale=30,
-                            projection=st.session_state.common_crs_str,
-                            geometries=False
+                        point_sample = raw_stack.sample(
+                            region=inspect_point, scale=30, projection="EPSG:4326", geometries=False
                         ).getInfo()
                         
                         if point_sample and len(point_sample['features']) > 0:
                             extracted_props = point_sample['features'][0]['properties']
-                            
-                            input_df = pd.DataFrame([extracted_props])[st.session_state.band_names_list]
+                            input_df = pd.DataFrame([extracted_props])[band_names]
                             point_prediction = model_pipeline.predict(input_df)[0]
                             
-                            st.metric(
-                                label="Predicted Malaria Prevalence (PfPR2-10)", 
-                                value=f"{point_prediction:.2f}%"
-                            )
-                            
+                            st.metric(label="Predicted Malaria Prevalence (PfPR2-10)", value=f"{point_prediction:.2f}%")
                             st.markdown("---")
                             st.markdown("**Environmental Predictor Metrics:**")
                             st.markdown(f"💧 **NDWI:** `{extracted_props.get('NDWI', 0):.4f}`")
