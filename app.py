@@ -351,17 +351,34 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
+     # Modified Legend and Print Trigger with CSS Background Fixes
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
+        <style>
+          @media print {{
+            /* Force browsers to include background colors and map tiles when printing */
+            * {{
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }}
+            #export-container {{
+              display: none !important; /* Hide the capture button on the final PDF */
+            }}
+          }}
+        </style>
+        
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+          
+          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; background-image: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+          
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
             <span>Low ({v_min})</span><span>High ({v_max})</span>
           </div>
         </div>
+        
         <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-          <button onclick="window.print()" style='padding: 6px 12px; background: white; border: 2px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px;'>📷 Save Map View</button>
+          <button onclick="setTimeout(lambda => window.print(), 1000)" style='padding: 6px 12px; background: white; border: 2px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>📷 Save Map View</button>
         </div>
         {{% endmacro %}}
         """
