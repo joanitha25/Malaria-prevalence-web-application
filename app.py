@@ -1,3 +1,19 @@
+import sys
+import subprocess
+
+# Auto-install dependencies if missing from the active environment
+try:
+    import joblib
+    import sklearn
+    import xgboost
+except ModuleNotFoundError:
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install", "--no-cache-dir",
+        "joblib", "numpy", "pandas", "earthengine-api", "folium", 
+        "branca", "scikit-learn==1.6.1", "xgboost", "streamlit"
+    ])
+    st.rerun()
+
 import streamlit as st
 import joblib
 import json
