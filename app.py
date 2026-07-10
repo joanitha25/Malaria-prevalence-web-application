@@ -10,6 +10,7 @@ import base64
 import folium
 import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
+from streamlit_folium import st_folium  # Imported for interactive point selection
 
 # ==============================================================================
 # 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
@@ -206,7 +207,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
             # ==================================================================
-            # ROBUST SERVER-SIDE SAMPLING (Replaces manual coordinate loops)
+            # ROBUST SERVER-SIDE SAMPLING 
             # ==================================================================
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             data_and_coords = raw_stack.addBands(lonlat_image)
@@ -251,19 +252,23 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .reproject(crs=commonProjection)\
                     .clip(aoi_geometry)
                 
+                # Cache parameters to local session memory for interface extraction
+                st.session_state.raw_stack_bands = raw_stack
+                st.session_state.band_names_list = band_names
+                st.session_state.common_crs_str = commonCRS
                 st.session_state.pixel_data = pixel_data
                 st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
                 st.session_state.aoi = aoi
                 st.session_state.map_ready = True
 
-    # ==========================================
+    # ==============================================================================
     # Rendering Screen Elements (Inside Workspace View)
-    # ==========================================
+    # ==============================================================================
     if st.session_state.map_ready:
         st.write("---")
         st.success(f"✅ Full predictive grid generated successfully for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # 💾 Export Spatial Products Code block (Nested accurately with 8 spaces indentation)
+        # 💾 Export Spatial Products Code block
         st.write("### 💾 Export Spatial Products:")
         try:
             raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
@@ -276,59 +281,108 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         except Exception:
             st.info("Download link generation timed out on remote GEE servers.")
             
-        # 🗺️ Interactive Map Display
-        map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
-        map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
+        st.write("---")
+        st.write("### 🗺️ Interactive Analysis Workspace")
+        st.caption("💡 Click anywhere inside the mapped district border to inspect local environmental predictors and model output.")
 
-        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
-        
-        aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
-        folium.TileLayer(
-            tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'{st.session_state.target_district} Border', overlay=True
-        ).add_to(f_map)
-        
-        min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
-        max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
-        
-        high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
-        vis_params = {'min': min_val, 'max': max_val, 'palette': high_contrast_palette}
-        
-        prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
-        folium.TileLayer(
-            tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
-        ).add_to(f_map)
-        
-        v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
-        css_gradient = ", ".join(high_contrast_palette)
+        # Create a side-by-side split layout panel
+        col1, col2 = st.columns([3, 1.5])
 
-        legend_template = f"""
-        {{% macro html(this, kwargs) %}}
-        <style>
-          @media print {{
-            * {{
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }}
-            #export-container {{ display: none !important; }}
-          }}
-        </style>
-        <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
-          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; background-image: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
-          <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low ({v_min})</span><span>High ({v_max})</span>
-          </div>
-        </div>
-        <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-          <button onclick="setTimeout(() => window.print(), 1200)" style='padding: 6px 12px; background: white; border: 2px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px;'>📷 Save Map View</button>
-        </div>
-        {{% endmacro %}}
-        """
-        macro = MacroElement()
-        macro._template = Template(legend_template)
-        f_map.add_child(macro)
+        with col1:
+            # 🗺️ Build the Base Folium Map Asset
+            map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
+            map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
 
-        folium.LayerControl().add_to(f_map)
-        components.html(f_map._repr_html_(), height=650, scrolling=True)
+            f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
+            
+            aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
+            folium.TileLayer(
+                tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
+                name=f'{st.session_state.target_district} Border', overlay=True
+            ).add_to(f_map)
+            
+            min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
+            max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
+            
+            high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
+            vis_params = {'min': min_val, 'max': max_val, 'palette': high_contrast_palette}
+            
+            prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
+            folium.TileLayer(
+                tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
+                name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
+            ).add_to(f_map)
+            
+            v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
+            css_gradient = ", ".join(high_contrast_palette)
+
+            # Map Legend Overlay HTML Macro Configuration
+            legend_template = f"""
+            {{% macro html(this, kwargs) %}}
+            <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 230px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
+              <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
+              <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+              <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
+                <span>Low ({v_min})</span><span>High ({v_max})</span>
+              </div>
+            </div>
+            {{% endmacro %}}
+            """
+            macro = MacroElement()
+            macro._template = Template(legend_template)
+            f_map.add_child(macro)
+            folium.LayerControl().add_to(f_map)
+
+            # Render map with bi-directional click tracking component active
+            map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
+
+        with col2:
+            st.subheader("📍 Point Inspector")
+            
+            # Catch the click parameters returned from the map interface element
+            if map_data and map_data.get("last_clicked"):
+                clicked_lat = map_data["last_clicked"]["lat"]
+                clicked_lng = map_data["last_clicked"]["lng"]
+                
+                st.info(f"**Selected Coordinates:**\n* **Lat:** `{clicked_lat:.5f}`\n* **Lon:** `{clicked_lng:.5f}`")
+                
+                with st.spinner("Extracting pixel attributes from GEE layers..."):
+                    try:
+                        inspect_point = ee.Geometry.Point([clicked_lng, clicked_lat])
+                        
+                        # Sample raw data bands at clicked coordinate space location
+                        point_sample = st.session_state.raw_stack_bands.sample(
+                            region=inspect_point,
+                            scale=30,
+                            projection=st.session_state.common_crs_str,
+                            geometries=False
+                        ).getInfo()
+                        
+                        if point_sample and len(point_sample['features']) > 0:
+                            extracted_props = point_sample['features'][0]['properties']
+                            
+                            # Align variables with prediction pipeline structure rules
+                            input_df = pd.DataFrame([extracted_props])[st.session_state.band_names_list]
+                            
+                            # Run local target area custom prediction matrix calculation
+                            point_prediction = model_pipeline.predict(input_df)[0]
+                            
+                            st.metric(
+                                label="Predicted Malaria Prevalence (PfPR2-10)", 
+                                value=f"{point_prediction:.2f}%"
+                            )
+                            
+                            st.markdown("---")
+                            st.markdown("**Environmental Predictor Metrics:**")
+                            st.markdown(f"💧 **NDWI:** `{extracted_props.get('NDWI', 0):.4f}`")
+                            st.markdown(f"🌿 **NDMI:** `{extracted_props.get('NDMI', 0):.4f}`")
+                            st.markdown(f"🌡️ **LST:** `{extracted_props.get('LST', 0):.2f} °C`")
+                            st.markdown(f"🌧️ **Rainfall:** `{extracted_props.get('Rainfall', 0):.1f} mm`")
+                            st.markdown(f"⛰️ **Elevation:** `{extracted_props.get('Elevation', 0):.1f} m`")
+                            st.markdown(f"🌊 **Distance to Water:** `{extracted_props.get('DistWater', 0)/1000:.2f} km`")
+                        else:
+                            st.warning("⚠️ Selected location is outside available coverage or administrative borders.")
+                    except Exception as err:
+                        st.error(f"Error extracting point attributes: {err}")
+            else:
+                st.write("Click any location inside the district bounds to view raw model inputs and custom coordinates.")

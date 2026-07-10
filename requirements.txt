@@ -7,3 +7,4 @@ joblib==1.4.2
 earthengine-api==0.1.408
 folium==0.17.0
 branca==0.7.2
+streamlit_folium
