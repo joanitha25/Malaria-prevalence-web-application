@@ -263,6 +263,15 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     if st.session_state.map_ready:
         st.write("---")
         st.success(f"✅ Full predictive grid generated successfully for {st.session_state.target_district} ({st.session_state.target_year})!")
+st.write("### 💾 Export Spatial Products:")
+try:
+    raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
+        'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}',
+        'scale': 5000, 'crs': 'EPSG:4326', 'filePerBand': False
+    })
+    st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
+except Exception:
+    st.info("Download link generation timed out on remote GEE servers.")
         
         map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
         map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
