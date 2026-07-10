@@ -12,14 +12,9 @@ import streamlit.components.v1 as components
 from branca.element import Template, MacroElement
 
 # ==========================================
-# 1. Earth Engine Authentication Setup
+# 0. Configuration Setup (MUST BE ABSOLUTE FIRST 'ST' COMMAND)
 # ==========================================
-# ... the rest of your app code stays exactly as it was
-
-# ==========================================
-# 1. Earth Engine Authentication Setup
-# ==========================================
-# ... (Keep the rest of your original code completely unchanged!)
+st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 # ==========================================
 # 1. Earth Engine Authentication Setup
