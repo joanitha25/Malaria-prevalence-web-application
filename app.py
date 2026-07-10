@@ -16,7 +16,7 @@ from streamlit_folium import st_folium
 st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 # ==============================================================================
-# 1. CACHED GLOBAL ASSETS & PURE UTILITY FUNCTIONS
+# 1. CACHED GLOBAL ASSETS
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
@@ -24,12 +24,55 @@ def load_ml_pipeline():
 
 model_pipeline = load_ml_pipeline()
 
-def get_annual_rain(y, aoi_geometry):
-    """Calculates annual precipitation sum for a given year using pure Earth Engine expressions."""
-    start = ee.Date.fromYMD(y, 1, 1)
-    end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
-    return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-        .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
+def reconstruct_raw_stack(target_district, target_year):
+    """Reconstructs environmental raw_stack using pure server-side expressions to protect JSON serializability."""
+    districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+    aoi = districts.filter(ee.Filter.eq("ADM2_NAME", target_district))
+    aoi_geometry = aoi.geometry()
+    
+    current_year = 2026
+    base_start = ee.Date.fromYMD(2020, 1, 1)
+    base_end = ee.Date.fromYMD(2026, 1, 1)
+    
+    if target_year == current_year:
+        real_start = ee.Date.fromYMD(current_year, 1, 1)
+        real_end = ee.Date('2026-07-10')
+        
+        s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(real_start, real_end).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+        lst_real = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
+        rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
+        
+        s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(base_start, base_end).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
+        lst_base = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
+        
+        # FIXED: Replacing lambda mappings with standard server-side CHIRPS group collections
+        rain_base = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
+            .filterBounds(aoi_geometry)\
+            .filterDate(base_start, base_end)\
+            .select("precipitation")\
+            .sum()\
+            .divide(6.0) # Average over the 6 historical reference years
+
+        s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
+        lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
+        rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
+    else:
+        start_date = ee.Date.fromYMD(target_year, 1, 1)
+        end_date = ee.Date.fromYMD(target_year + 1, 1, 1) if target_year < current_year else base_end
+        
+        s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(start_date, end_date).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"]).median().clip(aoi_geometry)
+        lst_raw = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(start_date, end_date).select("LST_Day_1km").mean().clip(aoi_geometry)
+        rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation").sum().rename("Rainfall").clip(aoi_geometry)
+
+    ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
+    ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+    lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
+    elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
+    water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
+    water5km = water.reproject(crs="EPSG:4326", scale=5000).unmask(0)
+    distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(5000).rename("DistWater").clip(aoi_geometry)
+
+    return ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
 
 # ==============================================================================
 # 2. EARTH ENGINE AUTHENTICATION SETUP
@@ -55,7 +98,6 @@ except Exception as e:
 # ==============================================================================
 st.title("A Web Application for Malaria Prevalence Prediction")
 
-# Initialize session state using ONLY pure Python primitives (Strings, Floats, Lists)
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.target_year = 2026
@@ -110,56 +152,13 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
     if st.button("Run Predictions"):
         with st.spinner("Extracting spatial diagnostics from Google Earth Engine..."):
-            
-            # 1. Define Geographic Boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
             aoi_geometry = aoi.geometry()
             
-            current_year = 2026
-            base_start = ee.Date.fromYMD(2020, 1, 1)
-            base_end = ee.Date.fromYMD(2026, 1, 1)
-            years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
-            
-            # 2. Extract Temporal Raster Datasets
-            if st.session_state.target_year == current_year:
-                real_start = ee.Date.fromYMD(current_year, 1, 1)
-                real_end = ee.Date('2026-07-10')
-                
-                s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(real_start, real_end).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_real = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
-                rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
-                
-                s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(base_start, base_end).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_base = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                
-                # Using a clean Earth Engine internal server map to eliminate serialization tracking bugs
-                rain_base = ee.ImageCollection(years_list.map(lambda y: ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi_geometry).filterDate(ee.Date.fromYMD(y, 1, 1), ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)).select("precipitation").sum())).mean()
-
-                s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
-                rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
-            else:
-                start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
-                end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1) if st.session_state.target_year < current_year else base_end
-                
-                s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterBounds(aoi_geometry).filterDate(start_date, end_date).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"]).median().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection("MODIS/061/MOD11A1").filterBounds(aoi_geometry).filterDate(start_date, end_date).select("LST_Day_1km").mean().clip(aoi_geometry)
-                rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation").sum().rename("Rainfall").clip(aoi_geometry)
-
-            # 3. Create Stack Indicators
-            ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
-            ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
-            lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
-            elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
-            water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
-            water5km = water.reproject(crs="EPSG:4326", scale=5000).unmask(0)
-            distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(5000).rename("DistWater").clip(aoi_geometry)
-
+            raw_stack = reconstruct_raw_stack(st.session_state.target_district, st.session_state.target_year)
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
-            raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
             
-            # 4. Mesh Prediction Data Arrays
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             sampling_features = raw_stack.addBands(lonlat_image).sample(
                 region=aoi_geometry, scale=4500, projection="EPSG:4326", tileScale=4
@@ -174,7 +173,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.session_state.min_val = float(pixel_data["predicted_PfPR"].min())
                 st.session_state.max_val = float(pixel_data["predicted_PfPR"].max())
                 
-                # Convert ML points back into an explicit raster layer on the server side
                 ee_features = [
                     ee.Feature(ee.Geometry.Point([r["longitude"], r["latitude"]]), {"predicted_PfPR": float(r["predicted_PfPR"])})
                     for _, r in pixel_data.iterrows()
@@ -185,7 +183,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear').reproject(crs=ee.Projection("EPSG:4326").atScale(30)).clip(aoi_geometry)
                 
-                # Extract static tile strings explicitly. We store ONLY the raw text URLs to prevent object leaks!
+                # Fetch plain string maps token URLs
                 high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
                 st.session_state.aoi_tile_url = ee.Image().paint(aoi, 0, 2).getMapId()['tile_fetcher'].url_format
                 st.session_state.pred_tile_url = smoothed_prediction_30m.getMapId({'min': st.session_state.min_val, 'max': st.session_state.max_val, 'palette': high_contrast_palette})['tile_fetcher'].url_format
@@ -198,14 +196,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         st.write("---")
         st.success(f"✅ Full predictive grid generated successfully for {st.session_state.target_district} ({st.session_state.target_year})!")
 
-        # Split Layout View (Map Left, Point Inspector Right)
         col1, col2 = st.columns([3, 1.5])
 
         with col1:
             map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
             map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
 
-            # Build standard map object using clean string parameters from session state
             f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
             
             folium.TileLayer(
@@ -220,11 +216,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             folium.LayerControl().add_to(f_map)
 
-            # This is now entirely clear of complex types, preventing JSON serialization errors
+            # Guaranteed safe call since f_map contains ONLY native strings now
             map_data = st_folium(f_map, width="100%", height=650, key="interactive_workspace_map")
 
         with col2:
-            # Render Legend Block natively in Streamlit HTML 
             high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
             v_min, v_max = f"{st.session_state.min_val:.1f}%", f"{st.session_state.max_val:.1f}%"
             css_gradient = ", ".join(high_contrast_palette)
@@ -252,9 +247,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
                 with st.spinner("Extracting point details from Earth Engine..."):
                     try:
-                        # Reconstruct raw image bands purely in local function memory space on map click
                         active_stack = reconstruct_raw_stack(st.session_state.target_district, st.session_state.target_year)
-                        
                         inspect_point = ee.Geometry.Point([clicked_lng, clicked_lat])
                         point_sample = active_stack.sample(region=inspect_point, scale=30, projection="EPSG:4326", geometries=False).getInfo()
                         
