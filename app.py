@@ -208,8 +208,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             # ==================================================================
             # ROBUST SERVER-SIDE SAMPLING (Replaces manual coordinate loops)
             # ==================================================================
-            # Use Earth Engine native sampling grid generation at 4500m to slightly overlap 
-            # borders, preventing any edge pixel dropouts.
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             data_and_coords = raw_stack.addBands(lonlat_image)
             
@@ -249,7 +247,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     properties=["predicted_PfPR"], reducer=ee.Reducer.mean()
                 ).reproject(crs=grid_projection)
                 
-                # Resample and back fill up to the boundary edge using unmask fallback
                 smoothed_prediction_30m = prediction_raster_5km.resample('bilinear')\
                     .reproject(crs=commonProjection)\
                     .clip(aoi_geometry)
@@ -259,20 +256,27 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.session_state.aoi = aoi
                 st.session_state.map_ready = True
 
-    # Render Screen Elements
+    # ==========================================
+    # Rendering Screen Elements (Inside Workspace View)
+    # ==========================================
     if st.session_state.map_ready:
         st.write("---")
         st.success(f"✅ Full predictive grid generated successfully for {st.session_state.target_district} ({st.session_state.target_year})!")
-st.write("### 💾 Export Spatial Products:")
-try:
-    raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
-        'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}',
-        'scale': 5000, 'crs': 'EPSG:4326', 'filePerBand': False
-    })
-    st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
-except Exception:
-    st.info("Download link generation timed out on remote GEE servers.")
         
+        # 💾 Export Spatial Products Code block (Nested accurately with 8 spaces indentation)
+        st.write("### 💾 Export Spatial Products:")
+        try:
+            raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
+                'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}',
+                'scale': 5000, 
+                'crs': 'EPSG:4326', 
+                'filePerBand': False
+            })
+            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
+        except Exception:
+            st.info("Download link generation timed out on remote GEE servers.")
+            
+        # 🗺️ Interactive Map Display
         map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
         map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
 
