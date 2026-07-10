@@ -45,6 +45,7 @@ st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
 
 st.title("A Web Application for Malaria Prevalence Prediction")
 
+# Initialize session state variables with default values
 if "map_ready" not in st.session_state:
     st.session_state.map_ready = False
     st.session_state.smoothed_prediction_30m = None
@@ -53,6 +54,7 @@ if "map_ready" not in st.session_state:
     st.session_state.target_year = 2026
     st.session_state.target_district = "Karagwe"
 
+# Explicit Navigation System
 current_view = st.radio(
     label="Navigation Menu",
     options=["About the Application", "Malaria Prevalence Prediction Workspace"],
@@ -70,12 +72,24 @@ if current_view == "About the Application":
     st.write(
         """
         This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
-        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables.
+        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
+        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
+        automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
+        Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
+        and distance to water bodies, for the selected district and year.
         
         ### Operational Timeline Capabilities:
         * **Historical Observation (2020–2025):** Extracts observed, completed annual satellite data layers.
         * **Hybrid Active Prediction (2026):** Dynamically blends actual in-situ observations recorded during the current year with historical baseline trends to capture real-time anomalies.
         * **Baseline Projection Framework (2027):** Simulates a mid-term risk map using a stable multi-year climatology background to isolate persistent structural transmission hot spots.
+        """
+    )
+    st.warning(
+        """
+        **Important note:**
+        The model generates predictions at the original model resolution (5 km). The displayed 30 m map is 
+        produced through resampling for visualization purposes only and should not be interpreted as 
+        increasing the spatial resolution or predictive accuracy of the model.
         """
     )
 
@@ -88,6 +102,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     def reset_map_state():
         st.session_state.map_ready = False
 
+    # Updated selectbox encompassing historical baseline, 2026 hybrid, and 2027 projection
     available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
     target_year = st.selectbox(
@@ -107,8 +122,19 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     st.session_state.target_district = target_district
 
     if st.button("Run Predictions"):
-        with st.spinner("Executing memory-optimized spatial prediction sequence..."):
+        current_year = 2026
+        
+        # Configure UI Spinner Messaging
+        if st.session_state.target_year == current_year:
+            spinner_msg = "Compiling 2026 hybrid observation-climatology blending pipeline..."
+        elif st.session_state.target_year > current_year:
+            spinner_msg = "Simulating 2027 projection framework from structural baseline climatology..."
+        else:
+            spinner_msg = "Extracting historical observed climate diagnostics from GEE..."
             
+        with st.spinner(spinner_msg):
+            
+            # Define Geographic Spatial Boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
             aoi_geometry = aoi.geometry()
@@ -118,10 +144,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             pfprScale = 5000
             commonProjection = ee.Projection(commonCRS).atScale(fineScale)
 
+            # Establish the historical reference window baseline (2020 through end of 2025)
             base_start = ee.Date.fromYMD(2020, 1, 1)
             base_end = ee.Date.fromYMD(2026, 1, 1)
-
+            
             years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
+            
             def get_annual_rain(y):
                 start = ee.Date.fromYMD(y, 1, 1)
                 end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
@@ -129,11 +157,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
 
             # ------------------------------------------------------------
-            # TEMPORAL ROUTING
+            # DYNAMIC TEMPORAL ROUTING PIPELINE
             # ------------------------------------------------------------
-            if st.session_state.target_year == 2026:
-                real_start = ee.Date.fromYMD(2026, 1, 1)
-                real_end = ee.Date('2026-07-10')
+            if st.session_state.target_year == current_year:
+                # HYBRID APPROACH: Real 2026 metrics up to today combined with historical baselines
+                real_start = ee.Date.fromYMD(current_year, 1, 1)
+                real_end = ee.Date('2026-07-10')  # Hardcoded deployment date threshold
                 
                 s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
                     .filterBounds(aoi_geometry).filterDate(real_start, real_end)\
@@ -145,6 +174,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
                     .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
                 
+                # Fetch reference baseline background assets
                 s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
@@ -154,11 +184,15 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 
                 rain_base = ee.ImageCollection(years_list.map(get_annual_rain)).mean()
 
+                # Merge active observations with baseline background context layers
                 s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
                 lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
+                
+                # Rain composite: Active accumulation + a 50% fraction of typical remaining variance
                 rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
 
-            elif st.session_state.target_year == 2027:
+            elif st.session_state.target_year > current_year:
+                # PURE CLIMATOLOGY PROJECTION (Target Year 2027)
                 s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
                     .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
@@ -172,6 +206,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
                 
             else:
+                # STANDARD HISTORICAL RECORD TRACKING (2020 - 2025)
                 start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
                 end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1)
                 
@@ -188,6 +223,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
                     .sum().rename("Rainfall").clip(aoi_geometry)
 
+            # Feature Calculation Logic
             ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
             ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
             lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
@@ -197,12 +233,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
             distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
-            # ------------------------------------------------------------
-            # OPTIMIZATION: HARDCODED BOUNDING BOXES (REMOVED .getInfo() MEMORY LEAK)
-            # ------------------------------------------------------------
+            # MEMORY FIX: Bounding Boxes (Removes the .getInfo() segmentation fault vector)
             if st.session_state.target_district == "Kyerwa":
                 min_lon, max_lon, min_lat, max_lat = 30.39, 31.05, -1.58, -1.02
-            else:  # Karagwe
+            else:  # Karagwe Default
                 min_lon, max_lon, min_lat, max_lat = 30.45, 31.42, -2.03, -1.29
             
             step = pfprScale / 111000.0
@@ -242,6 +276,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
+                # REFACTOR STABILITY FIX: Pure Native ee.Feature assembly without geemap dependencies
                 ee_features = []
                 for _, row in pixel_data.iterrows():
                     geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
@@ -262,7 +297,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.session_state.aoi = aoi
                 st.session_state.map_ready = True
 
-    # Presentation Layer
+    # Visual Output Canvas
     if st.session_state.map_ready:
         st.write("---")
         if st.session_state.target_year == 2026:
