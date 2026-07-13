@@ -210,7 +210,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             # INTEGRATING MALARIA ATLAS PROJECT DATASET FOR VALIDATION
             # ------------------------------------------------------------
             map_target_year = min(st.session_state.target_year, 2024)
-            map_collection = ee.ImageCollection("projects/malaria-atlas-project/PfPR_2-10_Yearly")\
+            map_collection = ee.ImageCollection('projects/malariaatlasproject/assets/PfPR_2-10_Yearly')\
                 .filterBounds(aoi_geometry)\
                 .filter(ee.Filter.eq('year', map_target_year))\
                 .select(['Mean'])
