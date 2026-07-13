@@ -108,7 +108,7 @@ if current_view == "About the Application":
                 overlay=True,
                 opacity=1.0
             ).add_to(about_map)
-            st_folium(about_map, height=350, width=None, key="about_locator_map", returned_objects=[])
+            st_folium(about_map, height=350, width=None, key="about_locator_map_static", returned_objects=[])
         except Exception:
             st.info("Interactive locator layout could not query live GEE geoms.")
 
@@ -120,20 +120,23 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
     available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
+    # We use a completely independent key signature string for the widget selector 
+    # to guarantee clean JSON boundaries during background serialization processes
     target_year = st.selectbox(
         "Select Target Surveillance / Projection Year", 
         available_years, 
-        index=available_years.index(st.session_state.target_year)
+        index=available_years.index(st.session_state.target_year),
+        key="surveillance_year_dropdown_selector"
     )
     
-    # State reset pattern: If the user changes selection, seamlessly mark the map map state unready
+    # Structural state reset pattern execution
     if target_year != st.session_state.target_year:
         st.session_state.target_year = target_year
         st.session_state.map_ready = False
 
     st.session_state.target_district = "Karagwe"  # Locked strictly to Karagwe
 
-    if st.button("Run Predictions"):
+    if st.button("Run Predictions", key="execute_prediction_run_trigger"):
         current_year = 2026
         spinner_msg = f"Extracting spatial diagnostics from Google Earth Engine for {st.session_state.target_district}..."
             
@@ -243,7 +246,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             # Load raw reference image
             raw_map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
-            # Check if MAP needs translation from fractional domain [0-1] to structural % [0-100]
+            # Color Scale Harmonization
             map_max = raw_map_raster.reduceRegion(reducer=ee.Reducer.max(), geometry=aoi_geometry, scale=5000, tileScale=4).get("MAP_PfPR")
             map_raster = ee.Algorithms.If(ee.Number(map_max).lte(1.0), raw_map_raster.multiply(100.0), raw_map_raster)
             map_raster = ee.Image(map_raster).rename("MAP_PfPR").clip(aoi_geometry)
@@ -312,7 +315,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         st.write("---")
         st.success(f"✅ Full predictive grid and verification layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # 🗺️ Interactive Map Display
+        # 🗺️ Interactive Map Display Setup
         f_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
@@ -360,14 +363,15 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         f_map.add_child(macro)
         folium.LayerControl().add_to(f_map)
         
-        # Add coordinate click handler layer
         folium.LatLngPopup().add_to(f_map)
         
         st.write("### 🗺️ Target Environmental Prediction Canvas")
         st.caption("💡 **Interactivity Hint:** Click anywhere inside the map area below to extract localized coordinate variables and model metrics instantly.")
         
-        # Render map canvas through streamlit-folium bidirectional processor
-        map_output = st_folium(f_map, height=600, width=None, key="interactive_prediction_map")
+        # DYNAMIC KEY ENFORCEMENT: Changing years shifts the unique key template string, 
+        # completely preventing background UI thread serialization conflicts.
+        dynamic_map_key = f"interactive_prediction_map_canvas_yr_{st.session_state.target_year}"
+        map_output = st_folium(f_map, height=600, width=None, key=dynamic_map_key)
         
         # ------------------------------------------------------------
         # REAL-TIME MAP CLICK COORDINATE CAPTURE & TELEMETRY LOOKUP ENGINE
