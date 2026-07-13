@@ -8,14 +8,14 @@ import ee
 import os
 import base64
 import folium
-import streamlit.components.v1 as components
+from streamlit_folium import st_folium
 from branca.element import Template, MacroElement
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 
 # ==============================================================================
 # 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
 # ==============================================================================
-st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
+st.set_page_config(page_title="Karagwe Malaria Prevalence Prediction", layout="wide")
 
 # ==============================================================================
 # 1. MODEL LOADING (Cached)
@@ -74,17 +74,44 @@ st.write("---")
 # View 1: About Panel
 # ==========================================
 if current_view == "About the Application":
-    st.header("About the Application")
-    st.write(
-        """
-        This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
-        rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
-        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
-        automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
-        Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
-        and distance to water bodies, for the selected district and year.
-        """
-    )
+    col_about, col_about_map = st.columns([3, 2])
+    
+    with col_about:
+        st.header("About the Application")
+        st.write(
+            """
+            This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
+            rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
+            and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
+            automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
+            Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
+            and distance to water bodies, for the selected district and year.
+            
+            By utilizing advanced remote sensing assets alongside predictive modeling frameworks, this workspace 
+            seeks to identify spatial operational anomalies and support targeted surveillance allocation measures 
+            across malaria-vulnerable communities.
+            """
+        )
+    
+    with col_about_map:
+        st.subheader("Target Study Area: Karagwe, Tanzania")
+        try:
+            # Generate a gorgeous native locator map for the about page
+            districts_geo = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+            karagwe_aoi = districts_geo.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
+            karagwe_map_id = ee.Image().paint(karagwe_aoi, 0, 3).getMapId()
+            
+            about_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, tiles="OpenStreetMap")
+            folium.TileLayer(
+                tiles=karagwe_map_id['tile_fetcher'].url_format,
+                attr='Google Earth Engine',
+                name='Karagwe Boundary Layer',
+                overlay=True,
+                opacity=1.0
+            ).add_to(about_map)
+            st_folium(about_map, height=350, width=None, key="about_locator_map", returned_objects=[])
+        except Exception:
+            st.info("Interactive locator layout could not query live GEE geoms.")
 
 # ==========================================
 # View 2: Prediction Workspace
@@ -103,19 +130,13 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         index=available_years.index(st.session_state.target_year),
         on_change=reset_map_state
     )
-    target_district = st.selectbox(
-        "Select Target District", 
-        ["Karagwe", "Kyerwa"], 
-        index=["Karagwe", "Kyerwa"].index(st.session_state.target_district),
-        on_change=reset_map_state
-    )
     
     st.session_state.target_year = target_year
-    st.session_state.target_district = target_district
+    st.session_state.target_district = "Karagwe"  # Locked strictly to Karagwe
 
     if st.button("Run Predictions"):
         current_year = 2026
-        spinner_msg = "Extracting spatial diagnostics from Google Earth Engine..."
+        spinner_msg = f"Extracting spatial diagnostics from Google Earth Engine for {st.session_state.target_district}..."
             
         with st.spinner(spinner_msg):
             
@@ -207,7 +228,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
             
             # ------------------------------------------------------------
-            # PERSONAL USER ASSETS PATH ROUTING MAP (2020-2024 Validation)
+            # USER ASSETS PATH ROUTING MAP (2020-2024 Validation)
             # ------------------------------------------------------------
             user_map_assets = {
                 2020: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2020",
@@ -217,19 +238,22 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 2024: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2024"
             }
             
-            # Map future projection years to the final baseline historical checkpoint (2024)
             map_target_year = min(st.session_state.target_year, 2024)
             selected_asset_path = user_map_assets[map_target_year]
             
-            # Load the explicit uploaded image directly, selecting the first numerical band
-            map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
+            # Load raw reference image
+            raw_map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
-            # Append MAP to our multi-band processing stack
+            # CRITICAL COLOR FIX: Check if MAP needs translation from fractional domain [0-1] to structural % [0-100]
+            # This enforces true color parity with the predictions when evaluating high contrast viz parameters
+            map_max = raw_map_raster.reduceRegion(reducer=ee.Reducer.max(), geometry=aoi_geometry, scale=5000, tileScale=4).get("MAP_PfPR")
+            map_raster = ee.Algorithms.If(ee.Number(map_max).lte(1.0), raw_map_raster.multiply(100.0), raw_map_raster)
+            map_raster = ee.Image(map_raster).rename("MAP_PfPR").clip(aoi_geometry)
+            
+            # Append scaled MAP layer to multi-band stack
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
 
-            # ==================================================================
-            # ROBUST SERVER-SIDE SAMPLING
-            # ==================================================================
+            # Server-Side Sampling Routine
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             data_and_coords = raw_stack.addBands(lonlat_image)
             
@@ -256,10 +280,9 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # Transform decimal fraction scale [0.0, 1.0] from MAP to structural percentages [0, 100]%
-                if "MAP_PfPR" in pixel_data.columns:
-                    if pixel_data["MAP_PfPR"].max() <= 1.0:
-                        pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
+                # Double-check Pandas representation array scales match
+                if "MAP_PfPR" in pixel_data.columns and pixel_data["MAP_PfPR"].max() <= 1.0:
+                    pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
                 
                 ee_features = []
                 for _, row in pixel_data.iterrows():
@@ -302,11 +325,9 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             y_true = df_valid["MAP_PfPR"]
             y_pred = df_valid["predicted_PfPR"]
             
-            # Calculate all three requested error diagnostics
             mae = mean_absolute_error(y_true, y_pred)
             rmse = root_mean_squared_error(y_true, y_pred)
             
-            # Safeguard R² score execution logic against zero variance conditions
             if len(df_valid) > 1 and y_true.var() != 0:
                 r2 = r2_score(y_true, y_pred)
                 r2_display = f"{r2:.3f}"
@@ -314,17 +335,15 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 r2 = None
                 r2_display = "N/A (Insufficient variance)"
             
-            # Setup an active 4-column metric presentation dashboard grid
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             col_m1.metric("Validation Year Baseline Source", f"User Asset MAP ({st.session_state.target_year})")
             col_m2.metric("Mean Absolute Error (MAE)", f"{mae:.3f} %")
             col_m3.metric("Root Mean Squared Error (RMSE)", f"{rmse:.3f} %")
             col_m4.metric("R² Score (Variance Explained)", r2_display)
             
-            # Contextual interpretative help captioning
             if r2 is not None:
                 if r2 < 0:
-                    st.caption("⚠️ **Note on negative $R^2$:** A negative value indicates that your custom model performs worse than a simple horizontal line matching the mean of the MAP data. This is common when testing highly uniform localized districts where spatial variance is near zero.")
+                    st.caption("⚠️ **Note on negative $R^2$:** A negative value indicates that your custom model performs worse than a simple horizontal line matching the mean of the MAP data.")
                 else:
                     st.caption(f"💡 Your model accounts for **{r2 * 100:.1f}%** of the geographical variation observed within your uploaded Malaria Atlas Project baseline framework.")
         else:
@@ -335,15 +354,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             )
 
         # 🗺️ Interactive Map Display
-        map_center = [-1.30, 30.39] if st.session_state.target_district == "Kyerwa" else [-1.59, 31.05]
-        map_zoom = 10 if st.session_state.target_district == "Kyerwa" else 9
-
-        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
+        f_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
         folium.TileLayer(
             tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'{st.session_state.target_district} Border', overlay=True
+            name='Karagwe Border Boundary', overlay=True
         ).add_to(f_map)
         
         min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
@@ -359,7 +375,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
-        # Layer 2: Malaria Atlas Project Reference Layer (From User Asset)
+        # Layer 2: Malaria Atlas Project Reference Layer (COLORS MATCH EXACTLY NOW)
         map_layer_id = st.session_state.map_raster.getMapId(vis_params) 
         folium.TileLayer(
             tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
@@ -371,59 +387,49 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
         legend_template = f"""
         {{% macro html(this, kwargs) %}}
-        <style>
-          @media print {{
-            * {{
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }}
-            #export-container {{ display: none !important; }}
-          }}
-        </style>
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; background-image: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
             <span>Low ({v_min})</span><span>High ({v_max})</span>
           </div>
-        </div>
-        <div id='export-container' style='position: absolute; z-index:9999; top: 10px; left: 50px;'>
-          <button onclick="setTimeout(() => window.print(), 1200)" style='padding: 6px 12px; background: white; border: 2px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: "Source Sans Pro", sans-serif; font-size: 12px;'>📷 Save Map View</button>
         </div>
         {{% endmacro %}}
         """
         macro = MacroElement()
         macro._template = Template(legend_template)
         f_map.add_child(macro)
-
         folium.LayerControl().add_to(f_map)
-        components.html(f_map._repr_html_(), height=650, scrolling=True)
+        
+        # Add a coordinate click handler capture asset to the map framework canvas
+        folium.LatLngPopup().add_to(f_map)
+        
+        st.write("### 🗺️ Target Environmental Prediction Canvas")
+        st.caption("💡 **Interactivity Hint:** Click anywhere inside the map area below to extract localized coordinate variables and model metrics instantly.")
+        
+        # Render map canvas through streamlit-folium bidirectional processor
+        map_output = st_folium(f_map, height=600, width=None, key="interactive_prediction_map")
         
         # ------------------------------------------------------------
-        # COORD QUERY & ENVIRONMENTAL PARAMETER LOOKUP ENGINE
+        # REAL-TIME MAP CLICK COORDINATE CAPTURE & TELEMETRY LOOKUP ENGINE
         # ------------------------------------------------------------
         st.write("---")
         st.write("### 🔍 Grid Coordinate Variable Profiler")
-        st.markdown(
-            "Select an inspected sampling coordinate within the district region below to inspect its explicit structural "
-            "environmental profiles and comparison values directly out of the runtime session memory allocation."
-        )
         
-        if not st.session_state.pixel_data.empty:
+        clicked_coords = map_output.get("last_clicked")
+        
+        if clicked_coords and not st.session_state.pixel_data.empty:
+            click_lat = clicked_coords["lat"]
+            click_lon = clicked_coords["lng"]
+            
+            # Vectorized Euclidean Nearest-Neighbor Search to locate closest sampled runtime pixel matrix point
             df_coords = st.session_state.pixel_data.copy()
-            df_coords["Coordinate_Label"] = df_coords.apply(
-                lambda r: f"Lat: {r['latitude']:.4f}, Lon: {r['longitude']:.4f}", axis=1
-            )
+            distances = np.sqrt((df_coords["latitude"] - click_lat)**2 + (df_coords["longitude"] - click_lon)**2)
+            matched_profile = df_coords.iloc[distances.idxmin()]
             
-            selected_label = st.selectbox(
-                "Choose a localized point pixel matrix inside the district boundary for detailed telemetry inspection:",
-                df_coords["Coordinate_Label"].unique()
-            )
+            st.info(f"📍 **Inspecting Nearest Telemetry Pixel Point:** Latitude: `{matched_profile['latitude']:.4f}`, Longitude: `{matched_profile['longitude']:.4f}`")
             
-            # Filter runtime arrays based on coordinate criteria metadata selections
-            matched_profile = df_coords[df_coords["Coordinate_Label"] == selected_label].iloc[0]
-            
-            # Construct display structure matrices
+            # Render descriptive dashboard columns
             col_p1, col_p2, col_p3 = st.columns(3)
             with col_p1:
                 st.metric("Model Predicted PfPR2-10", f"{matched_profile['predicted_PfPR']:.2f}%")
@@ -439,8 +445,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             col_idx1, col_idx2 = st.columns(2)
             col_idx1.metric("NDWI Remote Value Index", f"{matched_profile['NDWI']:.4f}")
             col_idx2.metric("NDMI Remote Value Index", f"{matched_profile['NDMI']:.4f}")
+        else:
+            st.info("Click a location on the interactive canvas map above to view its environmental variable breakdown.")
             
-        # 💾 Export Spatial Products Code block
+        # 💾 Export Spatial Products Block
         st.write("---")
         st.write("### 💾 Export Spatial Products:")
         try:
