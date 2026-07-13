@@ -260,9 +260,26 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             raw_map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
-            map_max = raw_map_raster.reduceRegion(reducer=ee.Reducer.max(), geometry=aoi_geometry, scale=5000, tileScale=4).get("MAP_PfPR")
-            map_raster = ee.Algorithms.If(ee.Number(map_max).lte(1.0), raw_map_raster.multiply(100.0), raw_map_raster)
-            map_raster = ee.Image(map_raster).rename("MAP_PfPR").clip(aoi_geometry)
+            # ==================================================================
+            # REFACTORED CONDITIONAL EVALUATION BLOCK
+            # ==================================================================
+            # 1. Fetch the max value safely down to Python to evaluate it
+            map_max_val = raw_map_raster.reduceRegion(
+                reducer=ee.Reducer.max(), 
+                geometry=aoi_geometry, 
+                scale=5000, 
+                tileScale=4
+            ).get("MAP_PfPR").getInfo() # <--- Crucial: .getInfo() pulls the raw float down to Python
+
+            # 2. Use a native Python conditional check instead of ee.Algorithms.If()
+            if map_max_val is not None and map_max_val <= 1.0:
+                map_raster = raw_map_raster.multiply(100.0)
+            else:
+                map_raster = raw_map_raster
+
+            # 3. Clean up properties and bounds
+            map_raster = map_raster.rename("MAP_PfPR").clip(aoi_geometry)
+            # ==================================================================
             
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
 
