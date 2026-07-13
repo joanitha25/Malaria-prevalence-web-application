@@ -207,15 +207,22 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
             
             # ------------------------------------------------------------
-            # INTEGRATING MALARIA ATLAS PROJECT DATASET FOR VALIDATION
+            # PERSONAL USER ASSETS PATH ROUTING MAP (2020-2024 Validation)
             # ------------------------------------------------------------
-            map_target_year = min(st.session_state.target_year, 2024)
-            map_collection = ee.ImageCollection('projects/malariaatlasproject/assets/PfPR_2-10_Yearly')\
-                .filterBounds(aoi_geometry)\
-                .filter(ee.Filter.eq('year', map_target_year))\
-                .select(['Mean'])
+            user_map_assets = {
+                2020: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2020",
+                2021: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2021",
+                2022: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2022",
+                2023: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2023",
+                2024: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2024"
+            }
             
-            map_raster = ee.Image(map_collection.first()).rename("MAP_PfPR").clip(aoi_geometry)
+            # Map future projection years to the final baseline historical checkpoint (2024)
+            map_target_year = min(st.session_state.target_year, 2024)
+            selected_asset_path = user_map_assets[map_target_year]
+            
+            # Load the explicit uploaded image directly, selecting the first numerical band
+            map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
             # Append MAP to our multi-band processing stack
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
@@ -309,7 +316,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             # Setup an active 4-column metric presentation dashboard grid
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            col_m1.metric("Validation Year Baseline Source", f"Malaria Atlas Project ({st.session_state.target_year})")
+            col_m1.metric("Validation Year Baseline Source", f"User Asset MAP ({st.session_state.target_year})")
             col_m2.metric("Mean Absolute Error (MAE)", f"{mae:.3f} %")
             col_m3.metric("Root Mean Squared Error (RMSE)", f"{rmse:.3f} %")
             col_m4.metric("R² Score (Variance Explained)", r2_display)
@@ -319,12 +326,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 if r2 < 0:
                     st.caption("⚠️ **Note on negative $R^2$:** A negative value indicates that your custom model performs worse than a simple horizontal line matching the mean of the MAP data. This is common when testing highly uniform localized districts where spatial variance is near zero.")
                 else:
-                    st.caption(f"💡 Your model accounts for **{r2 * 100:.1f}%** of the geographical variation observed within the Malaria Atlas Project baseline framework.")
+                    st.caption(f"💡 Your model accounts for **{r2 * 100:.1f}%** of the geographical variation observed within your uploaded Malaria Atlas Project baseline framework.")
         else:
             st.warning(
                 f"⚠️ Note: Direct year-matched validation metrics are restricted to historical periods (2020–2024). "
-                f"For the projection year {st.session_state.target_year}, the map visualization displays the "
-                "2024 Malaria Atlas Project layer as the baseline reference point."
+                f"For the projection year {st.session_state.target_year}, the map visualization displays your "
+                "2024 uploaded asset layer as the baseline reference point."
             )
 
         # 🗺️ Interactive Map Display
@@ -352,11 +359,11 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
-        # Layer 2: Malaria Atlas Project Reference Layer
+        # Layer 2: Malaria Atlas Project Reference Layer (From User Asset)
         map_layer_id = st.session_state.map_raster.getMapId(vis_params) 
         folium.TileLayer(
-            tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project',
-            name=f'Malaria Atlas Project Baseline ({min(st.session_state.target_year, 2024)})', overlay=True, opacity=0.65
+            tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
+            name=f'MAP Asset Baseline ({min(st.session_state.target_year, 2024)})', overlay=True, opacity=0.65
         ).add_to(f_map)
         
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
