@@ -10,7 +10,6 @@ import base64
 import folium
 from streamlit_folium import st_folium
 from branca.element import Template, MacroElement
-from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 
 # ==============================================================================
 # 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
@@ -96,7 +95,7 @@ if current_view == "About the Application":
     with col_about_map:
         st.subheader("Target Study Area: Karagwe, Tanzania")
         try:
-            # Generate a gorgeous native locator map for the about page
+            # Generate a native locator map for the about page
             districts_geo = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             karagwe_aoi = districts_geo.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
             karagwe_map_id = ee.Image().paint(karagwe_aoi, 0, 3).getMapId()
@@ -118,20 +117,20 @@ if current_view == "About the Application":
 # ==========================================
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
-    
-    def reset_map_state():
-        st.session_state.map_ready = False
 
     available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
     target_year = st.selectbox(
         "Select Target Surveillance / Projection Year", 
         available_years, 
-        index=available_years.index(st.session_state.target_year),
-        on_change=reset_map_state
+        index=available_years.index(st.session_state.target_year)
     )
     
-    st.session_state.target_year = target_year
+    # State reset pattern: If the user changes selection, seamlessly mark the map map state unready
+    if target_year != st.session_state.target_year:
+        st.session_state.target_year = target_year
+        st.session_state.map_ready = False
+
     st.session_state.target_district = "Karagwe"  # Locked strictly to Karagwe
 
     if st.button("Run Predictions"):
@@ -244,8 +243,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             # Load raw reference image
             raw_map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
-            # CRITICAL COLOR FIX: Check if MAP needs translation from fractional domain [0-1] to structural % [0-100]
-            # This enforces true color parity with the predictions when evaluating high contrast viz parameters
+            # Check if MAP needs translation from fractional domain [0-1] to structural % [0-100]
             map_max = raw_map_raster.reduceRegion(reducer=ee.Reducer.max(), geometry=aoi_geometry, scale=5000, tileScale=4).get("MAP_PfPR")
             map_raster = ee.Algorithms.If(ee.Number(map_max).lte(1.0), raw_map_raster.multiply(100.0), raw_map_raster)
             map_raster = ee.Image(map_raster).rename("MAP_PfPR").clip(aoi_geometry)
@@ -280,7 +278,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # Double-check Pandas representation array scales match
+                # Verify Pandas array scales match
                 if "MAP_PfPR" in pixel_data.columns and pixel_data["MAP_PfPR"].max() <= 1.0:
                     pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
                 
@@ -312,47 +310,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     # ==========================================
     if st.session_state.map_ready:
         st.write("---")
-        st.success(f"✅ Full predictive grid and validation layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
+        st.success(f"✅ Full predictive grid and verification layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # ------------------------------------------------------------
-        # PERFORMANCE & VALIDATION METRICS DISPLAY PANEL
-        # ------------------------------------------------------------
-        st.write("### 📊 Empirical Model Performance Assessment")
-        
-        df_valid = st.session_state.pixel_data.dropna(subset=["predicted_PfPR", "MAP_PfPR"])
-        
-        if not df_valid.empty and st.session_state.target_year <= 2024:
-            y_true = df_valid["MAP_PfPR"]
-            y_pred = df_valid["predicted_PfPR"]
-            
-            mae = mean_absolute_error(y_true, y_pred)
-            rmse = root_mean_squared_error(y_true, y_pred)
-            
-            if len(df_valid) > 1 and y_true.var() != 0:
-                r2 = r2_score(y_true, y_pred)
-                r2_display = f"{r2:.3f}"
-            else:
-                r2 = None
-                r2_display = "N/A (Insufficient variance)"
-            
-            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            col_m1.metric("Validation Year Baseline Source", f"User Asset MAP ({st.session_state.target_year})")
-            col_m2.metric("Mean Absolute Error (MAE)", f"{mae:.3f} %")
-            col_m3.metric("Root Mean Squared Error (RMSE)", f"{rmse:.3f} %")
-            col_m4.metric("R² Score (Variance Explained)", r2_display)
-            
-            if r2 is not None:
-                if r2 < 0:
-                    st.caption("⚠️ **Note on negative $R^2$:** A negative value indicates that your custom model performs worse than a simple horizontal line matching the mean of the MAP data.")
-                else:
-                    st.caption(f"💡 Your model accounts for **{r2 * 100:.1f}%** of the geographical variation observed within your uploaded Malaria Atlas Project baseline framework.")
-        else:
-            st.warning(
-                f"⚠️ Note: Direct year-matched validation metrics are restricted to historical periods (2020–2024). "
-                f"For the projection year {st.session_state.target_year}, the map visualization displays your "
-                "2024 uploaded asset layer as the baseline reference point."
-            )
-
         # 🗺️ Interactive Map Display
         f_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
         
@@ -375,7 +334,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
-        # Layer 2: Malaria Atlas Project Reference Layer (COLORS MATCH EXACTLY NOW)
+        # Layer 2: Malaria Atlas Project Reference Layer
         map_layer_id = st.session_state.map_raster.getMapId(vis_params) 
         folium.TileLayer(
             tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
@@ -401,7 +360,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         f_map.add_child(macro)
         folium.LayerControl().add_to(f_map)
         
-        # Add a coordinate click handler capture asset to the map framework canvas
+        # Add coordinate click handler layer
         folium.LatLngPopup().add_to(f_map)
         
         st.write("### 🗺️ Target Environmental Prediction Canvas")
