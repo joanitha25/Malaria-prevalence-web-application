@@ -69,7 +69,7 @@ current_view = st.radio(
 st.write("---")
 
 # ==========================================
-# View 1: About Panel
+# View 1: About Panel with Highlighted Boundaries
 # ==========================================
 if current_view == "About the Application":
     col_about, col_about_map = st.columns([3, 2])
@@ -93,24 +93,52 @@ if current_view == "About the Application":
     
     with col_about_map:
         st.subheader("Target Study Area: Karagwe, Tanzania")
-        # Generates a pure static geographical overview maps bounding box completely detached from GEE live schemas
+        
+        # Generates map centered around Karagwe
         about_static_map = folium.Map(
             location=[-1.59, 31.05], 
             zoom_start=9, 
-            tiles="OpenStreetMap",
-            zoom_control=False,
-            scrollWheelZoom=False,
-            dragging=False
+            tiles="OpenStreetMap"
         )
-        # Foliate marker identifying center point centroid coordinates
+        
+        try:
+            # Query administrative feature vector safely from GEE catalog asset
+            districts_gaul = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+            karagwe_boundary = districts_gaul.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
+            
+            # Use Earth Engine map tile pipelines to extract boundaries safely to mitigate live coordinate queries
+            boundary_image = ee.Image().paint(karagwe_boundary, 0, 3) # Edge thickness set to 3
+            boundary_map_id = boundary_image.getMapId({'palette': '#FF0000'})
+            
+            folium.TileLayer(
+                tiles=boundary_map_id['tile_fetcher'].url_format,
+                attr='Google Earth Engine GAUL',
+                name='Karagwe District Boundary',
+                overlay=True,
+                opacity=1.0
+            ).add_to(about_static_map)
+            
+        except Exception as boundary_err:
+            # High-reliability fallback: Add geometric circle outline indicator if GEE experiences api limits
+            folium.CircleMarker(
+                location=[-1.59, 31.05],
+                radius=45,
+                color="red",
+                weight=3,
+                fill=True,
+                fill_color="red",
+                fill_opacity=0.1,
+                popup="Karagwe Approximation Zone"
+            ).add_to(about_static_map)
+            
         folium.Marker(
             [-1.59, 31.05], 
             popup="Karagwe District Focus Zone",
             tooltip="Karagwe, Tanzania"
         ).add_to(about_static_map)
         
-        # Render clean fallback raw HTML container 
-        st.components.v1.html(about_static_map._repr_html_(), height=350)
+        # Render static iframe object
+        st.components.v1.html(about_static_map._repr_html_(), height=380)
 
 # ==========================================
 # View 2: Prediction Workspace
@@ -297,7 +325,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         st.write("---")
         st.success(f"✅ Full predictive grid and verification layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # 🗺️ Interactive Map Display Setup (CLEAN SERIALIZATION PROFILE)
         f_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
@@ -312,14 +339,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
         vis_params = {'min': min_val, 'max': max_val, 'palette': high_contrast_palette}
         
-        # Layer 1: Model Machine Learning Predictions
         prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
         folium.TileLayer(
             tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
             name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
-        # Layer 2: Malaria Atlas Project Reference Layer
         map_layer_id = st.session_state.map_raster.getMapId(vis_params) 
         folium.TileLayer(
             tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
@@ -329,10 +354,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         folium.LayerControl().add_to(f_map)
         
         st.write("### 🗺️ Target Environmental Prediction Canvas")
-        st.caption("💡 **Interactivity Hint:** Click anywhere inside the map area below to extract localized coordinate variables and model metrics instantly.")
+        st.caption("💡 **Interactivity Hint:** Click anywhere inside the map area below to extract localized coordinate variables.")
         
-        # Native Streamlit Sidebar or Split Layout for High Contrast Color Bar Map Legend
-        # This replaces MacroElement entirely, completely protecting the JSON runtime pipe.
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
         
@@ -353,9 +376,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         dynamic_map_key = f"interactive_prediction_map_canvas_yr_{st.session_state.target_year}"
         map_output = st_folium(f_map, height=600, width=None, key=dynamic_map_key)
         
-        # ------------------------------------------------------------
-        # REAL-TIME MAP CLICK COORDINATE CAPTURE & TELEMETRY LOOKUP ENGINE
-        # ------------------------------------------------------------
         st.write("---")
         st.write("### 🔍 Grid Coordinate Variable Profiler")
         
@@ -382,10 +402,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             with col_p3:
                 st.metric("LST Surface Temp", f"{matched_profile['LST']:.2f} °C")
                 st.metric("Distance to Surface Water", f"{matched_profile['DistWater']:.1f} m")
-                
-            col_idx1, col_idx2 = st.columns(2)
-            col_idx1.metric("NDWI Remote Value Index", f"{matched_profile['NDWI']:.4f}")
-            col_idx2.metric("NDMI Remote Value Index", f"{matched_profile['NDMI']:.4f}")
         else:
             st.info("Click a location on the interactive canvas map above to view its environmental variable breakdown.")
             
