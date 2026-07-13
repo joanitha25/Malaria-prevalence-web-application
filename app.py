@@ -226,14 +226,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 2024: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2024"
             }
             
-            # Map future projection years to the final baseline historical checkpoint (2024)
             map_target_year = min(st.session_state.target_year, 2024)
             selected_asset_path = user_map_assets[map_target_year]
             
-            # Load the explicit uploaded image directly, selecting the first numerical band
             map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
-            
-            # Append MAP to our multi-band processing stack
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
 
             # ==================================================================
@@ -244,7 +240,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             
             sampling_features = data_and_coords.sample(
                 region=aoi_geometry,
-                scale=4500,  
+                scale=3000, # Increased resolution factor density slightly for smooth interpolation mapping  
                 projection=commonCRS,
                 factor=None,
                 numPixels=None,
@@ -265,7 +261,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # Transform decimal fraction scale [0.0, 1.0] from MAP to structural percentages [0, 100]%
                 if "MAP_PfPR" in pixel_data.columns:
                     if pixel_data["MAP_PfPR"].max() <= 1.0:
                         pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
@@ -298,7 +293,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     # ==========================================
     if st.session_state.map_ready:
         st.write("---")
-        st.success(f"✅ Full predictive grid and validation layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
+        st.success(f"✅ Full predictive grid generated for {st.session_state.target_district} ({st.session_state.target_year})! Click anywhere inside the grid boundary to pull runtime coordinates.")
         
         # 🗺️ Interactive Map Display
         map_center = [-1.59, 31.05]
@@ -325,7 +320,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
         ).add_to(f_map)
         
-        # Layer 2: Malaria Atlas Project Reference Layer (With Vivid Color Palette Enabled)
+        # Layer 2: Malaria Atlas Project Reference Layer
         map_layer_id = st.session_state.map_raster.getMapId(vis_params) 
         folium.TileLayer(
             tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
@@ -333,35 +328,73 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         ).add_to(f_map)
         
         # ------------------------------------------------------------
-        # MAP CLICK INTERACTIVITY INTERFACE (Popups via Grid Points)
+        # JAVASCRIPT DIRECT ON-CLICK SPATIAL INTERACTIVE QUERY INJECTION
         # ------------------------------------------------------------
-        for _, row in st.session_state.pixel_data.iterrows():
-            map_val_str = f"{row['MAP_PfPR']:.2f}%" if "MAP_PfPR" in row and not pd.isna(row['MAP_PfPR']) else "N/A"
-            popup_html = f"""
-            <div style="font-family: 'Source Sans Pro', sans-serif; font-size:12px; width:220px;">
-                <h4 style="margin:2px 0; color:#333;">Telemetry Inspector</h4>
-                <hr style="margin:4px 0;"/>
-                <b>Predicted PfPR2-10:</b> {row['predicted_PfPR']:.2f}%<br/>
-                <b>MAP Baseline PfPR:</b> {map_val_str}<br/>
-                <b>LST Temp:</b> {row['LST']:.2f} °C<br/>
-                <b>Rainfall:</b> {row['Rainfall']:.2f} mm<br/>
-                <b>Elevation:</b> {row['Elevation']:.1f} m<br/>
-                <b>Dist to Water:</b> {row['DistWater']:.1f} m<br/>
-                <b>NDWI Index:</b> {row['NDWI']:.4f}<br/>
-                <b>NDMI Index:</b> {row['NDMI']:.4f}
-            </div>
-            """
-            folium.CircleMarker(
-                location=[row['latitude'], row['longitude']],
-                radius=6,
-                color="#333",
-                fill=True,
-                fill_color="#fff",
-                fill_opacity=0.1,
-                weight=0.5,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(f_map)
+        # Convert pandas dataframe matrix into json string safely parsed by front-end runtime browser canvas
+        json_data_payload = st.session_state.pixel_data.to_json(orient="records")
+        
+        click_macro_template = f"""
+        {{% macro html(this, kwargs) %}}
+        <script>
+            document.addEventListener("DOMContentLoaded", function() {{
+                setTimeout(function() {{
+                    // Locate instance mapping reference dynamically
+                    var map_instance = Object.values(window).find(val => val instanceof L.Map);
+                    if (!map_instance) return;
+                    
+                    var spatial_grid_dataset = {json_data_payload};
+                    
+                    map_instance.on('click', function(e) {{
+                        var click_lat = e.latlng.lat;
+                        var click_lon = e.latlng.lng;
+                        
+                        var nearest_pixel = null;
+                        var minimal_distance = Infinity;
+                        
+                        // Perform nearest neighbor spatial distance searching optimization routine
+                        for (var i = 0; i < spatial_grid_dataset.length; i++) {{
+                            var p = spatial_grid_dataset[i];
+                            var d = Math.sqrt(Math.pow(p.latitude - click_lat, 2) + Math.pow(p.longitude - click_lon, 2));
+                            if (d < minimal_distance) {{
+                                minimal_distance = d;
+                                nearest_pixel = p;
+                            }}
+                        }}
+                        
+                        // Establish a valid proximity checking perimeter constraint context (approx 6.5km bounding box window)
+                        if (nearest_pixel && minimal_distance < 0.06) {{
+                            var baseline_val_str = nearest_pixel.MAP_PfPR ? nearest_pixel.MAP_PfPR.toFixed(2) + "%" : "N/A";
+                            var content = `
+                                <div style="font-family: 'Source Sans Pro', sans-serif; font-size:12px; width:220px;">
+                                    <h4 style="margin:2px 0; color:#333;">🎯 Coordinates Inspector Target</h4>
+                                    <hr style="margin:4px 0;"/>
+                                    <b>Predicted PfPR2-10:</b> ${{nearest_pixel.predicted_PfPR.toFixed(2)}}%<br/>
+                                    <b>MAP Baseline PfPR:</b> ${{baseline_val_str}}<br/>
+                                    <b>LST Temp:</b> ${{nearest_pixel.LST.toFixed(2)}} °C<br/>
+                                    <b>Rainfall:</b> ${{nearest_pixel.Rainfall.toFixed(2)}} mm<br/>
+                                    <b>Elevation:</b> ${{nearest_pixel.Elevation.toFixed(1)}} m<br/>
+                                    <b>Dist to Water:</b> ${{nearest_pixel.DistWater.toFixed(1)}} m<br/>
+                                    <b>NDWI Index:</b> ${{nearest_pixel.NDWI.toFixed(4)}}<br/>
+                                    <b>NDMI Index:</b> ${{nearest_pixel.NDMI.toFixed(4)}}
+                                </div>
+                            `;
+                            L.popup()
+                             .setLatLng(e.latlng)
+                             .setContent(content)
+                             .openOn(map_instance);
+                        }}
+                    }});
+                }}, 1500);
+            }});
+        </script>
+        {{% endmacro %}}
+        """
+        
+        click_macro = MacroElement()
+        click_macro._template = Template(click_macro_template)
+        f_map.add_child(click_macro)
 
+        # Legend Layout Elements Construction
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
@@ -388,9 +421,9 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         </div>
         {{% endmacro %}}
         """
-        macro = MacroElement()
-        macro._template = Template(legend_template)
-        f_map.add_child(macro)
+        legend_macro = MacroElement()
+        legend_macro._template = Template(legend_template)
+        f_map.add_child(legend_macro)
 
         folium.LayerControl().add_to(f_map)
         components.html(f_map._repr_html_(), height=650, scrolling=True)
@@ -416,10 +449,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 df_coords["Coordinate_Label"].unique()
             )
             
-            # Filter runtime arrays based on coordinate criteria metadata selections
             matched_profile = df_coords[df_coords["Coordinate_Label"] == selected_label].iloc[0]
             
-            # Construct display structure matrices
             col_p1, col_p2, col_p3 = st.columns(3)
             with col_p1:
                 st.metric("Model Predicted PfPR2-10", f"{matched_profile['predicted_PfPR']:.2f}%")
