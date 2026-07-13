@@ -9,7 +9,6 @@ import os
 import base64
 import folium
 from streamlit_folium import st_folium
-from branca.element import Template, MacroElement
 
 # ==============================================================================
 # 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
@@ -94,23 +93,24 @@ if current_view == "About the Application":
     
     with col_about_map:
         st.subheader("Target Study Area: Karagwe, Tanzania")
-        try:
-            # Generate a native locator map for the about page
-            districts_geo = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
-            karagwe_aoi = districts_geo.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
-            karagwe_map_id = ee.Image().paint(karagwe_aoi, 0, 3).getMapId()
-            
-            about_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, tiles="OpenStreetMap")
-            folium.TileLayer(
-                tiles=karagwe_map_id['tile_fetcher'].url_format,
-                attr='Google Earth Engine',
-                name='Karagwe Boundary Layer',
-                overlay=True,
-                opacity=1.0
-            ).add_to(about_map)
-            st_folium(about_map, height=350, width=None, key="about_locator_map_static", returned_objects=[])
-        except Exception:
-            st.info("Interactive locator layout could not query live GEE geoms.")
+        # Generates a pure static geographical overview maps bounding box completely detached from GEE live schemas
+        about_static_map = folium.Map(
+            location=[-1.59, 31.05], 
+            zoom_start=9, 
+            tiles="OpenStreetMap",
+            zoom_control=False,
+            scrollWheelZoom=False,
+            dragging=False
+        )
+        # Foliate marker identifying center point centroid coordinates
+        folium.Marker(
+            [-1.59, 31.05], 
+            popup="Karagwe District Focus Zone",
+            tooltip="Karagwe, Tanzania"
+        ).add_to(about_static_map)
+        
+        # Render clean fallback raw HTML container 
+        st.components.v1.html(about_static_map._repr_html_(), height=350)
 
 # ==========================================
 # View 2: Prediction Workspace
@@ -120,8 +120,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
     available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
     
-    # We use a completely independent key signature string for the widget selector 
-    # to guarantee clean JSON boundaries during background serialization processes
     target_year = st.selectbox(
         "Select Target Surveillance / Projection Year", 
         available_years, 
@@ -129,20 +127,17 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         key="surveillance_year_dropdown_selector"
     )
     
-    # Structural state reset pattern execution
     if target_year != st.session_state.target_year:
         st.session_state.target_year = target_year
         st.session_state.map_ready = False
 
-    st.session_state.target_district = "Karagwe"  # Locked strictly to Karagwe
+    st.session_state.target_district = "Karagwe"
 
     if st.button("Run Predictions", key="execute_prediction_run_trigger"):
         current_year = 2026
         spinner_msg = f"Extracting spatial diagnostics from Google Earth Engine for {st.session_state.target_district}..."
             
         with st.spinner(spinner_msg):
-            
-            # Define Geographic Spatial Boundaries
             districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
             aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
             aoi_geometry = aoi.geometry()
@@ -152,7 +147,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             pfprScale = 5000
             commonProjection = ee.Projection(commonCRS).atScale(fineScale)
 
-            # Establish historical baseline dates
             base_start = ee.Date.fromYMD(2020, 1, 1)
             base_end = ee.Date.fromYMD(2026, 1, 1)
             years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
@@ -163,9 +157,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
                     .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
 
-            # ------------------------------------------------------------
-            # TEMPORAL DISPATCH ROUTER
-            # ------------------------------------------------------------
             if st.session_state.target_year == current_year:
                 real_start = ee.Date.fromYMD(current_year, 1, 1)
                 real_end = ee.Date('2026-07-10')
@@ -217,7 +208,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                     .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
                     .sum().rename("Rainfall").clip(aoi_geometry)
 
-            # Feature Layer Synthesizer
             ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
             ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
             lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
@@ -229,9 +219,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
             band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
             
-            # ------------------------------------------------------------
-            # USER ASSETS PATH ROUTING MAP (2020-2024 Validation)
-            # ------------------------------------------------------------
             user_map_assets = {
                 2020: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2020",
                 2021: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2021",
@@ -243,18 +230,14 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             map_target_year = min(st.session_state.target_year, 2024)
             selected_asset_path = user_map_assets[map_target_year]
             
-            # Load raw reference image
             raw_map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
             
-            # Color Scale Harmonization
             map_max = raw_map_raster.reduceRegion(reducer=ee.Reducer.max(), geometry=aoi_geometry, scale=5000, tileScale=4).get("MAP_PfPR")
             map_raster = ee.Algorithms.If(ee.Number(map_max).lte(1.0), raw_map_raster.multiply(100.0), raw_map_raster)
             map_raster = ee.Image(map_raster).rename("MAP_PfPR").clip(aoi_geometry)
             
-            # Append scaled MAP layer to multi-band stack
             raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
 
-            # Server-Side Sampling Routine
             lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
             data_and_coords = raw_stack.addBands(lonlat_image)
             
@@ -281,7 +264,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 X_pixels = pixel_data[band_names]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
-                # Verify Pandas array scales match
                 if "MAP_PfPR" in pixel_data.columns and pixel_data["MAP_PfPR"].max() <= 1.0:
                     pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
                 
@@ -315,7 +297,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         st.write("---")
         st.success(f"✅ Full predictive grid and verification layers generated for {st.session_state.target_district} ({st.session_state.target_year})!")
         
-        # 🗺️ Interactive Map Display Setup
+        # 🗺️ Interactive Map Display Setup (CLEAN SERIALIZATION PROFILE)
         f_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
         
         aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
@@ -344,32 +326,30 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             name=f'MAP Asset Baseline ({min(st.session_state.target_year, 2024)})', overlay=True, opacity=0.65
         ).add_to(f_map)
         
-        v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
-        css_gradient = ", ".join(high_contrast_palette)
-
-        legend_template = f"""
-        {{% macro html(this, kwargs) %}}
-        <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
-          <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
-          <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low ({v_min})</span><span>High ({v_max})</span>
-          </div>
-        </div>
-        {{% endmacro %}}
-        """
-        macro = MacroElement()
-        macro._template = Template(legend_template)
-        f_map.add_child(macro)
         folium.LayerControl().add_to(f_map)
-        
-        folium.LatLngPopup().add_to(f_map)
         
         st.write("### 🗺️ Target Environmental Prediction Canvas")
         st.caption("💡 **Interactivity Hint:** Click anywhere inside the map area below to extract localized coordinate variables and model metrics instantly.")
         
-        # DYNAMIC KEY ENFORCEMENT: Changing years shifts the unique key template string, 
-        # completely preventing background UI thread serialization conflicts.
+        # Native Streamlit Sidebar or Split Layout for High Contrast Color Bar Map Legend
+        # This replaces MacroElement entirely, completely protecting the JSON runtime pipe.
+        v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
+        css_gradient = ", ".join(high_contrast_palette)
+        
+        st.markdown(
+            f"""
+            <div style="border:1px solid #ddd; background-color: #f9f9f9; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+                <p style="margin: 0 0 5px 0; font-weight: bold; text-align: center;">Malaria Prevalence Legend (PfPR2-10)</p>
+                <div style="background: linear-gradient(to right, {css_gradient}); width: 100%; height: 15px; border-radius: 3px;"></div>
+                <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 12px; margin-top: 3px;">
+                    <span>Low ({v_min})</span>
+                    <span>High ({v_max})</span>
+                </div>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+
         dynamic_map_key = f"interactive_prediction_map_canvas_yr_{st.session_state.target_year}"
         map_output = st_folium(f_map, height=600, width=None, key=dynamic_map_key)
         
@@ -385,14 +365,12 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             click_lat = clicked_coords["lat"]
             click_lon = clicked_coords["lng"]
             
-            # Vectorized Euclidean Nearest-Neighbor Search to locate closest sampled runtime pixel matrix point
             df_coords = st.session_state.pixel_data.copy()
             distances = np.sqrt((df_coords["latitude"] - click_lat)**2 + (df_coords["longitude"] - click_lon)**2)
             matched_profile = df_coords.iloc[distances.idxmin()]
             
             st.info(f"📍 **Inspecting Nearest Telemetry Pixel Point:** Latitude: `{matched_profile['latitude']:.4f}`, Longitude: `{matched_profile['longitude']:.4f}`")
             
-            # Render descriptive dashboard columns
             col_p1, col_p2, col_p3 = st.columns(3)
             with col_p1:
                 st.metric("Model Predicted PfPR2-10", f"{matched_profile['predicted_PfPR']:.2f}%")
@@ -411,7 +389,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         else:
             st.info("Click a location on the interactive canvas map above to view its environmental variable breakdown.")
             
-        # 💾 Export Spatial Products Block
         st.write("---")
         st.write("### 💾 Export Spatial Products:")
         try:
