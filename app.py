@@ -443,14 +443,14 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                                 <div style="font-family: 'Source Sans Pro', sans-serif; font-size:12px; width:220px;">
                                     <h4 style="margin:2px 0; color:#2b6cb0;">🎯 Coordinates Inspector</h4>
                                     <hr style="margin:4px 0;"/>
-                                    <b>Predicted PfPR2-10:</b> \${nearest_pixel.predicted_PfPR.toFixed(2)}%<br/>
-                                    <b>MAP Baseline PfPR:</b> \${baseline_val_str}<br/>
-                                    <b>LST Temp:</b> \${nearest_pixel.LST.toFixed(2)} °C<br/>
-                                    <b>Rainfall:</b> \${nearest_pixel.Rainfall.toFixed(2)} mm<br/>
-                                    <b>Elevation:</b> \${nearest_pixel.Elevation.toFixed(1)} m<br/>
-                                    <b>Dist to Water:</b> \${nearest_pixel.DistWater.toFixed(1)} m<br/>
-                                    <b>NDWI Index:</b> \${nearest_pixel.NDWI.toFixed(4)}<br/>
-                                    <b>NDMI Index:</b> \${nearest_pixel.NDMI.toFixed(4)}
+                                    <b>Predicted PfPR2-10:</b> \${{nearest_pixel.predicted_PfPR.toFixed(2)}}%<br/>
+                                    <b>MAP Baseline PfPR:</b> \${{baseline_val_str}}<br/>
+                                    <b>LST Temp:</b> \${{nearest_pixel.LST.toFixed(2)}} °C<br/>
+                                    <b>Rainfall:</b> \${{nearest_pixel.Rainfall.toFixed(2)}} mm<br/>
+                                    <b>Elevation:</b> \${{nearest_pixel.Elevation.toFixed(1)}} m<br/>
+                                    <b>Dist to Water:</b> \${{nearest_pixel.DistWater.toFixed(1)}} m<br/>
+                                    <b>NDWI Index:</b> \${{nearest_pixel.NDWI.toFixed(4)}}<br/>
+                                    <b>NDMI Index:</b> \${{nearest_pixel.NDMI.toFixed(4)}}
                                 </div>
                             `;
                             
