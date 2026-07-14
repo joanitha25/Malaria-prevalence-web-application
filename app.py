@@ -519,15 +519,17 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception:
             st.info("Download link generation timed out on remote GEE servers.")
-# =========================================================
-# STEP 3: "How to Use" & Guidelines (Moved to Bottom)
-# =========================================================
-st.write("## 📖 How To Use & Model Interpretation Panel")
 
-with st.expander("ℹ️ How to Use This Module", expanded=True):
-    st.markdown(f"""
-    1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{target_year}**.
-    2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial Random Forest model.
-    3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
-    4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
-    """)
+    # =========================================================
+    # How to Use & Guidelines (Scoped strictly inside workspace view)
+    # =========================================================
+    st.write("---")
+    st.write("## 📖 How To Use & Model Interpretation Panel")
+
+    with st.expander("ℹ️ How to Use This Module", expanded=True):
+        st.markdown(f"""
+        1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{st.session_state.target_year}**.
+        2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial Random Forest model.
+        3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
+        4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
+        """)
