@@ -150,22 +150,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.rerun()
         except Exception as e:
             pass
-            
-    # 📖 How To Use & Model Interpretation Panel
-    st.markdown("""
-    <div class="instruction-card">
-        <h4 style="margin-top:0px; color:#2b6cb0;">📖 How to Use This Module</h4>
-        <ol style="margin-bottom:10px;">
-            <li><b>Select Target Projection Year:</b> Choose the specific year (between 2020 and 2027) for projection.</li>
-            <li><b>Run Predictions:</b> Click the <b>"Run Predictions"</b> button to fetch the dynamic Earth Engine products and evaluate the spatial Random Forest model.</li>
-            <li><b>Interact with the Map:</b> Use the layers panel, pan, or zoom into the high-resolution layers.</li>
-            <li><b>Extract Values:</b> Click <b>any point on the map</b> to instantly retrieve localized environmental predictors and model calculations inside the map popup window.</li>
-        </ol>
-        <p style="font-size: 0.85rem; color: #555; margin-bottom: 0px;">
-            💡 <i><b>Note for 30m presentation:</b> Local scale predictions are smoothed to 30m spatial resolution for visualization purpose only.</i>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
     
     # Model Achievement Metrics Column Layout
     st.write("### 📊 Predictive Model Achieved Metrics")
@@ -535,3 +519,15 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
         except Exception:
             st.info("Download link generation timed out on remote GEE servers.")
+# =========================================================
+# STEP 3: "How to Use" & Guidelines (Moved to Bottom)
+# =========================================================
+st.write("## 📖 How To Use & Model Interpretation Panel")
+
+with st.expander("ℹ️ How to Use This Module", expanded=True):
+    st.markdown(f"""
+    1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{target_year}**.
+    2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial Random Forest model.
+    3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
+    4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
+    """)
