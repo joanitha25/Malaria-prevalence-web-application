@@ -84,15 +84,6 @@ if "map_ready" not in st.session_state:
     st.session_state.map_raster = None
     st.session_state.clicked_point_data = None
 
-# Receive the JS callback coordinates and values through query parameters
-query_params = st.query_params
-if "click_data" in query_params:
-    try:
-        raw_json = base64.b64decode(query_params["click_data"]).decode("utf-8")
-        st.session_state.clicked_point_data = json.loads(raw_json)
-    except Exception:
-        pass
-
 # Explicit Navigation System
 current_view = st.radio(
     label="Navigation Menu",
@@ -139,6 +130,27 @@ if current_view == "About the Application":
 elif current_view == "Malaria Prevalence Prediction Workspace":
     st.header("Malaria Prevalence Prediction Workspace")
     
+    # ------------------------------------------------------------
+    # 🔄 STATE BRIDGE ENGINE (Forces rerun when query parameters change)
+    # ------------------------------------------------------------
+    query_params = st.query_params
+    if "click_data" in query_params:
+        try:
+            # Decode the base64 payload from the map click
+            raw_json = base64.b64decode(query_params["click_data"]).decode("utf-8")
+            new_click_data = json.loads(raw_json)
+            
+            # Check if this is a fresh click (prevents infinite rerun loops)
+            if (st.session_state.clicked_point_data is None or 
+                st.session_state.clicked_point_data.get("latitude") != new_click_data.get("latitude") or
+                st.session_state.clicked_point_data.get("longitude") != new_click_data.get("longitude")):
+                
+                st.session_state.clicked_point_data = new_click_data
+                # Force an immediate rerun so Streamlit updates the UI instantly
+                st.rerun()
+        except Exception as e:
+            pass
+            
     # 📖 How To Use & Model Interpretation Panel
     st.markdown("""
     <div class="instruction-card">
@@ -399,7 +411,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 ).add_to(f_map)
             
             # ------------------------------------------------------------
-            # JAVASCRIPT EXCLUDE CIRLCE MARKERS & HOOK DIRECT PARAM ON-CLICK
+            # JAVASCRIPT DIRECT PARAM ON-CLICK HANDLER
             # ------------------------------------------------------------
             json_data_payload = st.session_state.pixel_data.to_json(orient="records")
             
