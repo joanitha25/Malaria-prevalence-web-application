@@ -110,7 +110,7 @@ if current_view == "About the Application":
         """
     )
     
-    st.write("### 🗺️ Geographic Domain Workspace Reference: Karagwe")
+    st.write("### 🗺️ Target District: Karagwe")
     about_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
     try:
         districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
@@ -162,7 +162,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             <li><b>Extract Values:</b> Click <b>any point on the map</b> to instantly retrieve localized environmental predictors and model calculations inside the map popup window.</li>
         </ol>
         <p style="font-size: 0.85rem; color: #555; margin-bottom: 0px;">
-            💡 <i><b>Note for 30m presentation:</b> Local scale predictions are smoothed to 30m spatial resolution using bilinear resampling matrices across Earth Engine servers, preserving environmental microclimatic variances.</i>
+            💡 <i><b>Note for 30m presentation:</b> Local scale predictions are smoothed to 30m spatial resolution for visualization purpose only.</i>
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -171,13 +171,13 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     st.write("### 📊 Predictive Model Achieved Metrics")
     m_col1, m_col2, m_col3 = st.columns(3)
     with m_col1:
-        st.metric(label="Mean Absolute Error (MAE)", value="0.0384", delta="Excellent Precision")
+        st.metric(label="Mean Absolute Error (MAE)", value="0.592", delta="Good Precision")
     with m_col2:
-        st.metric(label="Root Mean Squared Error (RMSE)", value="0.0491", delta="Low Spatial Variance")
+        st.metric(label="Root Mean Squared Error (RMSE)", value="0.848", delta="Low Prediction Error")
     with m_col3:
-        st.metric(label="R-squared (R² Coefficient)", value="84.2%", delta="Strong Variance Explained")
+        st.metric(label="R-squared (R² Coefficient)", value="84.7%", delta="Strong Variance Explained")
 
-    st.markdown("The underlying machine learning model is trained on spatial covariate extractions from Tanzania's validation databases, showing highly robust performance profiles across variable ecosystems.")
+    st.markdown("The underlying machine learning model is trained on spatial covariate extractions from public databases, showing highly robust performance profiles across variable ecosystems.")
     st.write("---")
 
     def reset_map_state():
@@ -371,7 +371,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     if st.session_state.map_ready:
         st.write("---")
         
-        st.subheader("🗺️ Spatial Prediction Canvas")
+        st.subheader("🗺️ Interactive Map Display")
         
         # Interactive Map Display
         map_center = [-1.59, 31.05]
