@@ -524,7 +524,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
     # How to Use & Guidelines (Scoped strictly inside workspace view)
     # =========================================================
     st.write("---")
-    st.write("## 📖 How To Use & Model Interpretation Panel")
+    st.write("## 📖 How To Use This Module Panel")
 
     with st.expander("ℹ️ How to Use This Module", expanded=True):
         st.markdown(f"""
