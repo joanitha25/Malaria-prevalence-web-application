@@ -411,7 +411,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         # ------------------------------------------------------------
         json_data_payload = st.session_state.pixel_data.to_json(orient="records")
         
-        # Removed the 'f' string prefix to avoid brace interpolation syntax issues
+        # Safe string replacement avoiding brace interpolation syntax issues
         click_macro_template = """
         {% macro html(this, kwargs) %}
         <script>
@@ -495,18 +495,25 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        # Removed 'f' prefix and safely injected standard formatting values using .format()
+        # Removed '.format()' and safely injected standard values via sequential '.replace()'
         legend_template = """
         {% macro html(this, kwargs) %}
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {gradient_palette}) !important; background-image: linear-gradient(to right, {gradient_palette}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+          <div class='gradient-bar' style='background: linear-gradient(to right, REPLACE_GRADIENT_PALETTE) !important; background-image: linear-gradient(to right, REPLACE_GRADIENT_PALETTE) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low ({v_min_val})</span><span>High ({v_max_val})</span>
+            <span>Low (REPLACE_V_MIN)</span><span>High (REPLACE_V_MAX)</span>
           </div>
         </div>
         {% endmacro %}
-        """.format(gradient_palette=css_gradient, v_min_val=v_min, v_max_val=v_max)
+        """
+        
+        legend_template = (
+            legend_template
+            .replace("REPLACE_GRADIENT_PALETTE", css_gradient)
+            .replace("REPLACE_V_MIN", v_min)
+            .replace("REPLACE_V_MAX", v_max)
+        )
         
         legend_macro = MacroElement()
         legend_macro._template = Template(legend_template)
