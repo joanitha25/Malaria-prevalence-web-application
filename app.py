@@ -411,46 +411,47 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         # ------------------------------------------------------------
         json_data_payload = st.session_state.pixel_data.to_json(orient="records")
         
-        click_macro_template = f"""
-        {{% macro html(this, kwargs) %}}
+        # Removed the 'f' string prefix to avoid brace interpolation syntax issues
+        click_macro_template = """
+        {% macro html(this, kwargs) %}
         <script>
-            document.addEventListener("DOMContentLoaded", function() {{
-                setTimeout(function() {{
+            document.addEventListener("DOMContentLoaded", function() {
+                setTimeout(function() {
                     var map_instance = Object.values(window).find(val => val instanceof L.Map);
                     if (!map_instance) return;
                     
-                    var spatial_grid_dataset = {json_data_payload};
+                    var spatial_grid_dataset = REPLACE_JSON_DATA_PAYLOAD;
                     
-                    map_instance.on('click', function(e) {{
+                    map_instance.on('click', function(e) {
                         var click_lat = e.latlng.lat;
                         var click_lon = e.latlng.lng;
                         
                         var nearest_pixel = null;
                         var minimal_distance = Infinity;
                         
-                        for (var i = 0; i < spatial_grid_dataset.length; i++) {{
+                        for (var i = 0; i < spatial_grid_dataset.length; i++) {
                             var p = spatial_grid_dataset[i];
                             var d = Math.sqrt(Math.pow(p.latitude - click_lat, 2) + Math.pow(p.longitude - click_lon, 2));
-                            if (d < minimal_distance) {{
+                            if (d < minimal_distance) {
                                 minimal_distance = d;
                                 nearest_pixel = p;
                             }
-                        }}
+                        }
                         
-                        if (nearest_pixel && minimal_distance < 0.06) {{
+                        if (nearest_pixel && minimal_distance < 0.06) {
                             var baseline_val_str = nearest_pixel.MAP_PfPR ? nearest_pixel.MAP_PfPR.toFixed(2) + "%" : "N/A (Projection Period)";
                             var content = `
                                 <div style="font-family: 'Source Sans Pro', sans-serif; font-size:12px; width:220px;">
                                     <h4 style="margin:2px 0; color:#2b6cb0;">🎯 Coordinates Inspector</h4>
                                     <hr style="margin:4px 0;"/>
-                                    <b>Predicted PfPR2-10:</b> \${{nearest_pixel.predicted_PfPR.toFixed(2)}}%<br/>
-                                    <b>MAP Baseline PfPR:</b> \${{baseline_val_str}}<br/>
-                                    <b>LST Temp:</b> \${{nearest_pixel.LST.toFixed(2)}} °C<br/>
-                                    <b>Rainfall:</b> \${{nearest_pixel.Rainfall.toFixed(2)}} mm<br/>
-                                    <b>Elevation:</b> \${{nearest_pixel.Elevation.toFixed(1)}} m<br/>
-                                    <b>Dist to Water:</b> \${{nearest_pixel.DistWater.toFixed(1)}} m<br/>
-                                    <b>NDWI Index:</b> \${{nearest_pixel.NDWI.toFixed(4)}}<br/>
-                                    <b>NDMI Index:</b> \${{nearest_pixel.NDMI.toFixed(4)}}
+                                    <b>Predicted PfPR2-10:</b> ${nearest_pixel.predicted_PfPR.toFixed(2)}%<br/>
+                                    <b>MAP Baseline PfPR:</b> ${baseline_val_str}<br/>
+                                    <b>LST Temp:</b> ${nearest_pixel.LST.toFixed(2)} °C<br/>
+                                    <b>Rainfall:</b> ${nearest_pixel.Rainfall.toFixed(2)} mm<br/>
+                                    <b>Elevation:</b> ${nearest_pixel.Elevation.toFixed(1)} m<br/>
+                                    <b>Dist to Water:</b> ${nearest_pixel.DistWater.toFixed(1)} m<br/>
+                                    <b>NDWI Index:</b> ${nearest_pixel.NDWI.toFixed(4)}<br/>
+                                    <b>NDMI Index:</b> ${nearest_pixel.NDMI.toFixed(4)}
                                 </div>
                             `;
                             
@@ -460,7 +461,7 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                              .openOn(map_instance);
 
                             // Construct state payload and dispatch query update variables directly back to Streamlit URL state
-                            var payload = {{
+                            var payload = {
                                 latitude: nearest_pixel.latitude,
                                 longitude: nearest_pixel.longitude,
                                 predicted_PfPR: nearest_pixel.predicted_PfPR,
@@ -471,20 +472,20 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                                 DistWater: nearest_pixel.DistWater,
                                 NDWI: nearest_pixel.NDWI,
                                 NDMI: nearest_pixel.NDMI
-                            }};
+                            };
                             
                             var b64_payload = btoa(JSON.stringify(payload));
-                            window.parent.postMessage({{
+                            window.parent.postMessage({
                                 type: 'streamlit:set_query_params',
-                                queryParams: {{ click_data: b64_payload }}
-                            }}, '*');
-                        }}
-                    }});
-                }}, 1500);
-            }});
+                                queryParams: { click_data: b64_payload }
+                            }, '*');
+                        }
+                    });
+                }, 1500);
+            });
         </script>
-        {{% endmacro %}}
-        """
+        {% endmacro %}
+        """.replace("REPLACE_JSON_DATA_PAYLOAD", json_data_payload)
         
         click_macro = MacroElement()
         click_macro._template = Template(click_macro_template)
@@ -494,17 +495,19 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
         css_gradient = ", ".join(high_contrast_palette)
 
-        legend_template = f"""
-        {{% macro html(this, kwargs) %}}
+        # Removed 'f' prefix and safely injected standard formatting values using .format()
+        legend_template = """
+        {% macro html(this, kwargs) %}
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
-          <div class='gradient-bar' style='background: linear-gradient(to right, {css_gradient}) !important; background-image: linear-gradient(to right, {css_gradient}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
+          <div class='gradient-bar' style='background: linear-gradient(to right, {gradient_palette}) !important; background-image: linear-gradient(to right, {gradient_palette}) !important; width: 100%; height: 18px; border-radius: 4px; border: 1px solid #777;'></div>
           <div class='legend-labels' style='margin-top: 5px; font-weight: 600; color: #444; display: flex; justify-content: space-between;'>
-            <span>Low ({v_min})</span><span>High ({v_max})</span>
+            <span>Low ({v_min_val})</span><span>High ({v_max_val})</span>
           </div>
         </div>
-        {{% endmacro %}}
-        """
+        {% endmacro %}
+        """.format(gradient_palette=css_gradient, v_min_val=v_min, v_max_val=v_max)
+        
         legend_macro = MacroElement()
         legend_macro._template = Template(legend_template)
         f_map.add_child(legend_macro)
