@@ -1,26 +1,61 @@
-import streamlit as st
-import sys
-import joblib
+import base64
+from datetime import datetime
 import json
+import os
+import sys
+from branca.element import MacroElement, Template
+import ee
+import folium
+import joblib
 import numpy as np
 import pandas as pd
-import ee
-import os
-import base64
-import folium
+import streamlit as st
 import streamlit.components.v1 as components
-from branca.element import Template, MacroElement
 
 # ==============================================================================
-# 0. CONFIGURATION SETUP (Must be the absolute first Streamlit execution)
+# 0. CONFIGURATION & SVG LOGO SETUP (Must be the absolute first Streamlit execution)
 # ==============================================================================
-st.set_page_config(page_title="Malaria Prevalence Prediction", layout="wide")
+MPP_LOGO_SVG = """
+<svg width="58" height="58" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="14" fill="#1E3A8A"/>
+  <circle cx="32" cy="32" r="22" stroke="#60A5FA" stroke-width="2.5" stroke-dasharray="4 3"/>
+  <path d="M32 14V22M32 42V50M14 32H22M42 32H50" stroke="#93C5FD" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="12" fill="#EF4444" fill-opacity="0.9"/>
+  <text x="32" y="36" text-anchor="middle" fill="#FFFFFF" font-family="Arial, sans-serif" font-weight="bold" font-size="11">MPP</text>
+</svg>
+"""
+
+st.set_page_config(
+    page_title="MPP | Malaria Prevalence Prediction",
+    page_icon="🦟",
+    layout="wide",
+)
 
 # Inject custom CSS to enhance the overall visual hierarchy, font layout, and cards
-st.markdown("""
+st.markdown(
+    """
     <style>
     .reportview-container {
         background-color: #f8f9fa;
+    }
+    .header-container {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 10px;
+    }
+    .header-title {
+        margin: 0;
+        padding: 0;
+        font-size: 2.1rem;
+        font-weight: 700;
+        color: #1e293b;
+        line-height: 1.2;
+    }
+    .header-subtitle {
+        margin: 2px 0 0 0;
+        font-size: 0.95rem;
+        color: #475569;
     }
     .metric-card {
         background-color: white;
@@ -38,19 +73,24 @@ st.markdown("""
         margin-bottom: 20px;
     }
     </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
+
 
 # ==============================================================================
 # 1. MODEL & FEATURE LOADING (Cached)
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
-    return joblib.load("xgboost_pfpr.joblib")
+  return joblib.load("xgboost_pfpr.joblib")
+
 
 @st.cache_data
 def load_model_features():
-    with open("features.json", "r") as f:
-        return json.load(f)
+  with open("features.json", "r") as f:
+    return json.load(f)
+
 
 model_pipeline = load_ml_pipeline()
 model_features = load_model_features()
@@ -59,43 +99,60 @@ model_features = load_model_features()
 # 2. EARTH ENGINE AUTHENTICATION SETUP
 # ==============================================================================
 try:
-    b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
-    decoded_bytes = base64.b64decode(b64_credentials)
-    credentials_dict = json.loads(decoded_bytes.decode("utf-8"))
-    
-    service_account_email = credentials_dict["client_email"]
-    
-    with open("ee_credentials.json", "w") as f:
-        json.dump(credentials_dict, f)
-        
-    credentials = ee.ServiceAccountCredentials(service_account_email, "ee_credentials.json")
-    ee.Initialize(credentials)
-    
+  b64_credentials = st.secrets["EARTHENGINE_CREDENTIALS_BASE64"]
+  decoded_bytes = base64.b64decode(b64_credentials)
+  credentials_dict = json.loads(decoded_bytes.decode("utf-8"))
+
+  service_account_email = credentials_dict["client_email"]
+
+  with open("ee_credentials.json", "w") as f:
+    json.dump(credentials_dict, f)
+
+  credentials = ee.ServiceAccountCredentials(
+      service_account_email, "ee_credentials.json"
+  )
+  ee.Initialize(credentials)
+
 except Exception as e:
-    st.error(f"Earth Engine Authentication Failed. Error details: {e}")
+  st.error(f"Earth Engine Authentication Failed. Error details: {e}")
 
 # ==============================================================================
-# 3. MAIN INTERFACE HEADER SETUP
+# 3. MAIN INTERFACE HEADER WITH MPP LOGO
 # ==============================================================================
-st.title("A Web Application for Malaria Prevalence Prediction")
+st.markdown(
+    f"""
+    <div class="header-container">
+        <div>{MPP_LOGO_SVG}</div>
+        <div>
+            <h1 class="header-title">MPP: Malaria Prevalence Prediction</h1>
+            <p class="header-subtitle">Geospatial Environmental Modeling &amp; PfPR<sub>2–10</sub> Surveillance Platform</p>
+        </div>
+    </div>
+""",
+    unsafe_allow_html=True,
+)
 
 # Initialize session state variables with default values
 if "map_ready" not in st.session_state:
-    st.session_state.map_ready = False
-    st.session_state.smoothed_prediction_30m = None
-    st.session_state.pixel_data = None
-    st.session_state.aoi = None
-    st.session_state.target_year = 2026
-    st.session_state.target_district = "Karagwe"
-    st.session_state.map_raster = None
-    st.session_state.clicked_point_data = None
+  st.session_state.map_ready = False
+  st.session_state.smoothed_prediction_30m = None
+  st.session_state.pixel_data = None
+  st.session_state.aoi = None
+  st.session_state.target_year = 2026
+  st.session_state.target_district = "Karagwe"
+  st.session_state.map_raster = None
+  st.session_state.clicked_point_data = None
 
-# Explicit Navigation System
+# Explicit Navigation System (Added User Feedback tab)
 current_view = st.radio(
     label="Navigation Menu",
-    options=["About the Application", "Malaria Prevalence Prediction Workspace"],
+    options=[
+        "About the Application",
+        "Malaria Prevalence Prediction Workspace",
+        "User Feedback",
+    ],
     horizontal=True,
-    label_visibility="collapsed"
+    label_visibility="collapsed",
 )
 
 st.write("---")
@@ -104,301 +161,401 @@ st.write("---")
 # View 1: About Panel
 # ==========================================
 if current_view == "About the Application":
-    st.header("About the Application")
-    st.write(
-        """
+  st.header("About MPP (Malaria Prevalence Prediction)")
+  st.write("""
         This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
         rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
         and a trained XGBoost machine learning pipeline. It integrates Google Earth Engine (GEE) to 
         automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
         Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
         and distance to water bodies, for the selected district and year.
-        """
-    )
-    
-    st.write("### 🗺️ Target District: Karagwe")
-    about_map = folium.Map(location=[-1.59, 31.05], zoom_start=9, control_scale=True)
-    try:
-        districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
-        aoi_karagwe = districts.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
-        aoi_map_id = ee.Image().paint(aoi_karagwe, 0, 2).getMapId()
-        folium.TileLayer(
-            tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name='Karagwe Boundary Layer', overlay=True
-        ).add_to(about_map)
-    except Exception:
-        pass
-    components.html(about_map._repr_html_(), height=400, scrolling=False)
+        """)
+
+  st.write("### 🗺️ Target District: Karagwe")
+  about_map = folium.Map(
+      location=[-1.59, 31.05], zoom_start=9, control_scale=True
+  )
+  try:
+    districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+    aoi_karagwe = districts.filter(ee.Filter.eq("ADM2_NAME", "Karagwe"))
+    aoi_map_id = ee.Image().paint(aoi_karagwe, 0, 2).getMapId()
+    folium.TileLayer(
+        tiles=aoi_map_id["tile_fetcher"].url_format,
+        attr="Google Earth Engine",
+        name="Karagwe Boundary Layer",
+        overlay=True,
+    ).add_to(about_map)
+  except Exception:
+    pass
+  components.html(about_map._repr_html_(), height=400, scrolling=False)
 
 # ==========================================
 # View 2: Prediction Workspace
 # ==========================================
 elif current_view == "Malaria Prevalence Prediction Workspace":
-    st.header("Malaria Prevalence Prediction Workspace")
-    
-    # ------------------------------------------------------------
-    # 🔄 STATE BRIDGE ENGINE (Forces rerun when query parameters change)
-    # ------------------------------------------------------------
-    query_params = st.query_params
-    if "click_data" in query_params:
-        try:
-            # Decode the base64 payload from the map click
-            raw_json = base64.b64decode(query_params["click_data"]).decode("utf-8")
-            new_click_data = json.loads(raw_json)
-            
-            # Check if this is a fresh click (prevents infinite rerun loops)
-            if (st.session_state.clicked_point_data is None or 
-                st.session_state.clicked_point_data.get("latitude") != new_click_data.get("latitude") or
-                st.session_state.clicked_point_data.get("longitude") != new_click_data.get("longitude")):
-                
-                st.session_state.clicked_point_data = new_click_data
-                # Force an immediate rerun so Streamlit updates the UI instantly
-                st.rerun()
-        except Exception as e:
-            pass
+  st.header("Malaria Prevalence Prediction Workspace")
 
-    def reset_map_state():
-        st.session_state.map_ready = False
-        st.session_state.clicked_point_data = None
+  # ------------------------------------------------------------
+  # 🔄 STATE BRIDGE ENGINE (Forces rerun when query parameters change)
+  # ------------------------------------------------------------
+  query_params = st.query_params
+  if "click_data" in query_params:
+    try:
+      raw_json = base64.b64decode(query_params["click_data"]).decode("utf-8")
+      new_click_data = json.loads(raw_json)
 
-    available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
-    
-    target_year = st.selectbox(
-        "Select Target Surveillance / Projection Year", 
-        available_years, 
-        index=available_years.index(st.session_state.target_year),
-        on_change=reset_map_state
+      if (
+          st.session_state.clicked_point_data is None
+          or st.session_state.clicked_point_data.get("latitude")
+          != new_click_data.get("latitude")
+          or st.session_state.clicked_point_data.get("longitude")
+          != new_click_data.get("longitude")
+      ):
+
+        st.session_state.clicked_point_data = new_click_data
+        st.rerun()
+    except Exception:
+      pass
+
+  def reset_map_state():
+    st.session_state.map_ready = False
+    st.session_state.clicked_point_data = None
+
+  available_years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
+
+  target_year = st.selectbox(
+      "Select Target Surveillance / Projection Year",
+      available_years,
+      index=available_years.index(st.session_state.target_year),
+      on_change=reset_map_state,
+  )
+
+  st.session_state.target_year = target_year
+  st.session_state.target_district = "Karagwe"
+
+  if st.button("Run Predictions", type="primary"):
+    current_year = 2026
+    spinner_msg = f"Extracting spatial diagnostics from Google Earth Engine for {st.session_state.target_district}..."
+
+    with st.spinner(spinner_msg):
+      districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
+      aoi = districts.filter(
+          ee.Filter.eq("ADM2_NAME", st.session_state.target_district)
+      )
+      aoi_geometry = aoi.geometry()
+
+      commonCRS = "EPSG:4326"
+      fineScale = 30
+      pfprScale = 5000
+      commonProjection = ee.Projection(commonCRS).atScale(fineScale)
+
+      base_start = ee.Date.fromYMD(2020, 1, 1)
+      base_end = ee.Date.fromYMD(2026, 1, 1)
+      years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
+
+      def get_annual_rain(y):
+        start = ee.Date.fromYMD(y, 1, 1)
+        end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
+        return (
+            ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+            .filterBounds(aoi_geometry)
+            .filterDate(start, end)
+            .select("precipitation")
+            .sum()
+        )
+
+      # TEMPORAL DISPATCH ROUTER
+      if st.session_state.target_year == current_year:
+        real_start = ee.Date.fromYMD(current_year, 1, 1)
+        real_end = ee.Date("2026-07-10")
+
+        s2_real = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(aoi_geometry)
+            .filterDate(real_start, real_end)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+            .select(["B3", "B8", "B11"])
+        )
+        lst_real = (
+            ee.ImageCollection("MODIS/061/MOD11A1")
+            .filterBounds(aoi_geometry)
+            .filterDate(real_start, real_end)
+            .select("LST_Day_1km")
+        )
+        rain_real = (
+            ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+            .filterBounds(aoi_geometry)
+            .filterDate(real_start, real_end)
+            .select("precipitation")
+            .sum()
+        )
+
+        s2_base = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(aoi_geometry)
+            .filterDate(base_start, base_end)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+            .select(["B3", "B8", "B11"])
+        )
+        lst_base = (
+            ee.ImageCollection("MODIS/061/MOD11A1")
+            .filterBounds(aoi_geometry)
+            .filterDate(base_start, base_end)
+            .select("LST_Day_1km")
+        )
+        rain_base = ee.ImageCollection(years_list.map(get_annual_rain)).mean()
+
+        s2 = (
+            ee.ImageCollection([s2_real.median(), s2_base.median()])
+            .mean()
+            .clip(aoi_geometry)
+        )
+        lst_raw = (
+            ee.ImageCollection([lst_real.mean(), lst_base.mean()])
+            .mean()
+            .clip(aoi_geometry)
+        )
+        rainfall = (
+            rain_real.add(rain_base.multiply(0.5))
+            .rename("Rainfall")
+            .clip(aoi_geometry)
+        )
+
+      elif st.session_state.target_year > current_year:
+        s2Collection = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(aoi_geometry)
+            .filterDate(base_start, base_end)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+            .select(["B3", "B8", "B11"])
+        )
+        s2 = s2Collection.median().clip(aoi_geometry)
+
+        lst_collection = (
+            ee.ImageCollection("MODIS/061/MOD11A1")
+            .filterBounds(aoi_geometry)
+            .filterDate(base_start, base_end)
+            .select("LST_Day_1km")
+        )
+        lst_raw = lst_collection.mean().clip(aoi_geometry)
+
+        annual_rain_collection = ee.ImageCollection(
+            years_list.map(get_annual_rain)
+        )
+        rainfall = (
+            annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
+        )
+
+      else:
+        start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
+        end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1)
+
+        s2 = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(aoi_geometry)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+            .select(["B3", "B8", "B11"])
+            .median()
+            .clip(aoi_geometry)
+        )
+        lst_raw = (
+            ee.ImageCollection("MODIS/061/MOD11A1")
+            .filterBounds(aoi_geometry)
+            .filterDate(start_date, end_date)
+            .select("LST_Day_1km")
+            .mean()
+            .clip(aoi_geometry)
+        )
+        rainfall = (
+            ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+            .filterBounds(aoi_geometry)
+            .filterDate(start_date, end_date)
+            .select("precipitation")
+            .sum()
+            .rename("Rainfall")
+            .clip(aoi_geometry)
+        )
+
+      # Feature Layer Synthesizer
+      ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
+      ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
+      lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
+      elevation = (
+          ee.Image("USGS/SRTMGL1_003")
+          .select("elevation")
+          .rename("Elevation")
+          .clip(aoi_geometry)
+      )
+
+      water = (
+          ee.Image("JRC/GSW1_4/GlobalSurfaceWater")
+          .select("occurrence")
+          .gte(50)
+          .clip(aoi_geometry)
+      )
+      water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
+      distWater5km = (
+          water5km.fastDistanceTransform(256, "pixels", "squared_euclidean")
+          .sqrt()
+          .multiply(pfprScale)
+          .rename("DistWater")
+          .clip(aoi_geometry)
+      )
+
+      feature_layers = {
+          "NDWI": ndwi,
+          "NDMI": ndmi,
+          "LST": lst,
+          "Rainfall": rainfall,
+          "Elevation": elevation,
+          "DistWater": distWater5km,
+      }
+      selected_bands = [feature_layers[feat] for feat in model_features]
+
+      user_map_assets = {
+          2020: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2020",
+          2021: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2021",
+          2022: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2022",
+          2023: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2023",
+          2024: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2024",
+      }
+
+      if st.session_state.target_year < 2025:
+        map_target_year = min(st.session_state.target_year, 2024)
+        selected_asset_path = user_map_assets[map_target_year]
+        map_raster = (
+            ee.Image(selected_asset_path)
+            .select([0])
+            .rename("MAP_PfPR")
+            .clip(aoi_geometry)
+        )
+        raw_stack = ee.Image.cat(selected_bands + [map_raster]).toFloat()
+      else:
+        map_raster = None
+        raw_stack = ee.Image.cat(selected_bands).toFloat()
+
+      # ROBUST SERVER-SIDE SAMPLING
+      lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
+      data_and_coords = raw_stack.addBands(lonlat_image)
+
+      sampling_features = data_and_coords.sample(
+          region=aoi_geometry,
+          scale=3000,
+          projection=commonCRS,
+          factor=None,
+          numPixels=None,
+          geometries=True,
+          tileScale=4,
+      ).getInfo()
+
+      features_list = []
+      for feat in sampling_features["features"]:
+        props = feat["properties"]
+        if "longitude" in props and "latitude" in props:
+          features_list.append(props)
+
+      pixel_data = (
+          pd.DataFrame(features_list) if features_list else pd.DataFrame()
+      )
+
+      if not pixel_data.empty:
+        pixel_data = pixel_data.dropna(subset=model_features)
+        X_pixels = pixel_data[model_features]
+        pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
+
+        if "MAP_PfPR" in pixel_data.columns:
+          if pixel_data["MAP_PfPR"].max() <= 1.0:
+            pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
+
+        ee_features = []
+        for _, row in pixel_data.iterrows():
+          geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
+          feat = ee.Feature(
+              geom, {"predicted_PfPR": float(row["predicted_PfPR"])}
+          )
+          ee_features.append(feat)
+
+        predicted_gee_layer = ee.FeatureCollection(ee_features)
+        grid_projection = ee.Projection(commonCRS).atScale(pfprScale)
+
+        prediction_raster_5km = predicted_gee_layer.reduceToImage(
+            properties=["predicted_PfPR"], reducer=ee.Reducer.mean()
+        ).reproject(crs=grid_projection)
+
+        smoothed_prediction_30m = (
+            prediction_raster_5km.resample("bilinear")
+            .reproject(crs=commonProjection)
+            .clip(aoi_geometry)
+        )
+
+        st.session_state.pixel_data = pixel_data
+        st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
+        st.session_state.map_raster = map_raster
+        st.session_state.aoi = aoi
+        st.session_state.map_ready = True
+
+  # Rendering Interface (Map & Visualizations)
+  if st.session_state.map_ready:
+    st.write("---")
+    st.subheader("🗺️ Interactive Map Display")
+
+    map_center = [-1.59, 31.05]
+    map_zoom = 9
+
+    f_map = folium.Map(
+        location=map_center, zoom_start=map_zoom, control_scale=True
     )
-    
-    st.session_state.target_year = target_year
-    st.session_state.target_district = "Karagwe"
 
-    if st.button("Run Predictions", type="primary"):
-        current_year = 2026
-        spinner_msg = f"Extracting spatial diagnostics from Google Earth Engine for {st.session_state.target_district}..."
-            
-        with st.spinner(spinner_msg):
-            # Define Geographic Spatial Boundaries
-            districts = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2")
-            aoi = districts.filter(ee.Filter.eq("ADM2_NAME", st.session_state.target_district))
-            aoi_geometry = aoi.geometry()
-            
-            commonCRS = "EPSG:4326"
-            fineScale = 30
-            pfprScale = 5000
-            commonProjection = ee.Projection(commonCRS).atScale(fineScale)
+    aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
+    folium.TileLayer(
+        tiles=aoi_map_id["tile_fetcher"].url_format,
+        attr="Google Earth Engine",
+        name=f"{st.session_state.target_district} Border",
+        overlay=True,
+    ).add_to(f_map)
 
-            # Establish historical baseline dates
-            base_start = ee.Date.fromYMD(2020, 1, 1)
-            base_end = ee.Date.fromYMD(2026, 1, 1)
-            years_list = ee.List([2020, 2021, 2022, 2023, 2024, 2025])
-            
-            def get_annual_rain(y):
-                start = ee.Date.fromYMD(y, 1, 1)
-                end = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1)
-                return ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(start, end).select("precipitation").sum()
+    min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
+    max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
 
-            # ------------------------------------------------------------
-            # TEMPORAL DISPATCH ROUTER
-            # ------------------------------------------------------------
-            if st.session_state.target_year == current_year:
-                real_start = ee.Date.fromYMD(current_year, 1, 1)
-                real_end = ee.Date('2026-07-10')
-                
-                s2_real = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_real = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("LST_Day_1km")
-                rain_real = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(real_start, real_end).select("precipitation").sum()
-                
-                s2_base = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                lst_base = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                rain_base = ee.ImageCollection(years_list.map(get_annual_rain)).mean()
+    high_contrast_palette = [
+        "#3288bd",
+        "#99d594",
+        "#e6f598",
+        "#fee08b",
+        "#fc8d59",
+        "#d53e4f",
+    ]
+    vis_params = {
+        "min": min_val,
+        "max": max_val,
+        "palette": high_contrast_palette,
+    }
 
-                s2 = ee.ImageCollection([s2_real.median(), s2_base.median()]).mean().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection([lst_real.mean(), lst_base.mean()]).mean().clip(aoi_geometry)
-                rainfall = rain_real.add(rain_base.multiply(0.5)).rename("Rainfall").clip(aoi_geometry)
+    prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(
+        vis_params
+    )
+    folium.TileLayer(
+        tiles=prediction_map_id["tile_fetcher"].url_format,
+        attr="Google Earth Engine",
+        name=f"Predicted PfPR ({st.session_state.target_year})",
+        overlay=True,
+        opacity=0.85,
+    ).add_to(f_map)
 
-            elif st.session_state.target_year > current_year:
-                s2Collection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])
-                s2 = s2Collection.median().clip(aoi_geometry)
-                
-                lst_collection = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(base_start, base_end).select("LST_Day_1km")
-                lst_raw = lst_collection.mean().clip(aoi_geometry)
-                
-                annual_rain_collection = ee.ImageCollection(years_list.map(get_annual_rain))
-                rainfall = annual_rain_collection.mean().rename("Rainfall").clip(aoi_geometry)
-                
-            else:
-                start_date = ee.Date.fromYMD(st.session_state.target_year, 1, 1)
-                end_date = ee.Date.fromYMD(st.session_state.target_year + 1, 1, 1)
-                
-                s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date)\
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).select(["B3", "B8", "B11"])\
-                    .median().clip(aoi_geometry)
-                lst_raw = ee.ImageCollection("MODIS/061/MOD11A1")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("LST_Day_1km")\
-                    .mean().clip(aoi_geometry)
-                rainfall = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")\
-                    .filterBounds(aoi_geometry).filterDate(start_date, end_date).select("precipitation")\
-                    .sum().rename("Rainfall").clip(aoi_geometry)
+    if st.session_state.map_raster is not None:
+      map_layer_id = st.session_state.map_raster.getMapId(vis_params)
+      folium.TileLayer(
+          tiles=map_layer_id["tile_fetcher"].url_format,
+          attr="Malaria Atlas Project User Asset",
+          name=f"MAP Asset Baseline ({min(st.session_state.target_year, 2024)})",
+          overlay=True,
+          opacity=0.65,
+      ).add_to(f_map)
 
-            # Feature Layer Synthesizer
-            ndwi = s2.normalizedDifference(["B3", "B8"]).rename("NDWI")
-            ndmi = s2.normalizedDifference(["B8", "B11"]).rename("NDMI")
-            lst = lst_raw.multiply(0.02).subtract(273.15).rename("LST")
-            elevation = ee.Image("USGS/SRTMGL1_003").select("elevation").rename("Elevation").clip(aoi_geometry)
-            
-            water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(50).clip(aoi_geometry)
-            water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
-            distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
+    json_data_payload = st.session_state.pixel_data.to_json(orient="records")
 
-            # Map available GEE feature layers to the features specified in final_model_features.json
-            feature_layers = {
-                "NDWI": ndwi,
-                "NDMI": ndmi,
-                "LST": lst,
-                "Rainfall": rainfall,
-                "Elevation": elevation,
-                "DistWater": distWater5km
-            }
-            selected_bands = [feature_layers[feat] for feat in model_features]
-            
-            # ------------------------------------------------------------
-            # PERSONAL USER ASSETS PATH ROUTING MAP (Validation check)
-            # ------------------------------------------------------------
-            user_map_assets = {
-                2020: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2020",
-                2021: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2021",
-                2022: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2022",
-                2023: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2023",
-                2024: "projects/ee-joanithakaijage/assets/MAP_PfPR2_10_2024"
-            }
-            
-            # Map Raster references are strictly excluded for target projection years 2025-2027
-            if st.session_state.target_year < 2025:
-                map_target_year = min(st.session_state.target_year, 2024)
-                selected_asset_path = user_map_assets[map_target_year]
-                map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
-                raw_stack = ee.Image.cat(selected_bands + [map_raster]).toFloat()
-            else:
-                map_raster = None
-                raw_stack = ee.Image.cat(selected_bands).toFloat()
-
-            # ==================================================================
-            # ROBUST SERVER-SIDE SAMPLING
-            # ==================================================================
-            lonlat_image = ee.Image.pixelLonLat().clip(aoi_geometry)
-            data_and_coords = raw_stack.addBands(lonlat_image)
-            
-            sampling_features = data_and_coords.sample(
-                region=aoi_geometry,
-                scale=3000, 
-                projection=commonCRS,
-                factor=None,
-                numPixels=None,
-                geometries=True,
-                tileScale=4
-            ).getInfo()
-
-            features_list = []
-            for feat in sampling_features["features"]:
-                props = feat["properties"]
-                if "longitude" in props and "latitude" in props:
-                    features_list.append(props)
-            
-            pixel_data = pd.DataFrame(features_list) if features_list else pd.DataFrame()
-
-            if not pixel_data.empty:
-                pixel_data = pixel_data.dropna(subset=model_features)
-                X_pixels = pixel_data[model_features]
-                pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
-                
-                if "MAP_PfPR" in pixel_data.columns:
-                    if pixel_data["MAP_PfPR"].max() <= 1.0:
-                        pixel_data["MAP_PfPR"] = pixel_data["MAP_PfPR"] * 100.0
-                
-                ee_features = []
-                for _, row in pixel_data.iterrows():
-                    geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
-                    feat = ee.Feature(geom, {"predicted_PfPR": float(row["predicted_PfPR"])})
-                    ee_features.append(feat)
-                
-                predicted_gee_layer = ee.FeatureCollection(ee_features)
-                grid_projection = ee.Projection(commonCRS).atScale(pfprScale)
-                
-                prediction_raster_5km = predicted_gee_layer.reduceToImage(
-                    properties=["predicted_PfPR"], reducer=ee.Reducer.mean()
-                ).reproject(crs=grid_projection)
-                
-                smoothed_prediction_30m = prediction_raster_5km.resample('bilinear')\
-                    .reproject(crs=commonProjection)\
-                    .clip(aoi_geometry)
-                
-                st.session_state.pixel_data = pixel_data
-                st.session_state.smoothed_prediction_30m = smoothed_prediction_30m
-                st.session_state.map_raster = map_raster
-                st.session_state.aoi = aoi
-                st.session_state.map_ready = True
-
-    # ==========================================
-    # Rendering Interface (Map & Visualizations)
-    # ==========================================
-    if st.session_state.map_ready:
-        st.write("---")
-        
-        st.subheader("🗺️ Interactive Map Display")
-        
-        # Interactive Map Display
-        map_center = [-1.59, 31.05]
-        map_zoom = 9
-
-        f_map = folium.Map(location=map_center, zoom_start=map_zoom, control_scale=True)
-        
-        aoi_map_id = ee.Image().paint(st.session_state.aoi, 0, 2).getMapId()
-        folium.TileLayer(
-            tiles=aoi_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'{st.session_state.target_district} Border', overlay=True
-        ).add_to(f_map)
-        
-        min_val = float(st.session_state.pixel_data["predicted_PfPR"].min())
-        max_val = float(st.session_state.pixel_data["predicted_PfPR"].max())
-        
-        high_contrast_palette = ['#3288bd', '#99d594', '#e6f598', '#fee08b', '#fc8d59', '#d53e4f']
-        vis_params = {'min': min_val, 'max': max_val, 'palette': high_contrast_palette}
-        
-        # Layer 1: Model Machine Learning Predictions
-        prediction_map_id = st.session_state.smoothed_prediction_30m.getMapId(vis_params)
-        folium.TileLayer(
-            tiles=prediction_map_id['tile_fetcher'].url_format, attr='Google Earth Engine',
-            name=f'Predicted PfPR ({st.session_state.target_year})', overlay=True, opacity=0.85
-        ).add_to(f_map)
-        
-        # Layer 2: Malaria Atlas Project Reference Layer (Only load for < 2025)
-        if st.session_state.map_raster is not None:
-            map_layer_id = st.session_state.map_raster.getMapId(vis_params) # Re-uses unified parameters
-            folium.TileLayer(
-                tiles=map_layer_id['tile_fetcher'].url_format, attr='Malaria Atlas Project User Asset',
-                name=f'MAP Asset Baseline ({min(st.session_state.target_year, 2024)})', overlay=True, opacity=0.65
-            ).add_to(f_map)
-        
-        # ------------------------------------------------------------
-        # JAVASCRIPT DIRECT PARAM ON-CLICK HANDLER
-        # ------------------------------------------------------------
-        json_data_payload = st.session_state.pixel_data.to_json(orient="records")
-        
-        # Safe string replacement avoiding brace interpolation syntax issues
-        click_macro_template = """
+    click_macro_template = """
         {% macro html(this, kwargs) %}
         <script>
             document.addEventListener("DOMContentLoaded", function() {
@@ -446,7 +603,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                              .setContent(content)
                              .openOn(map_instance);
 
-                            // Construct state payload and dispatch query update variables directly back to Streamlit URL state
                             var payload = {
                                 latitude: nearest_pixel.latitude,
                                 longitude: nearest_pixel.longitude,
@@ -472,17 +628,16 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
         </script>
         {% endmacro %}
         """.replace("REPLACE_JSON_DATA_PAYLOAD", json_data_payload)
-        
-        click_macro = MacroElement()
-        click_macro._template = Template(click_macro_template)
-        f_map.add_child(click_macro)
 
-        # Legend Layout Elements Construction
-        v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
-        css_gradient = ", ".join(high_contrast_palette)
+    click_macro = MacroElement()
+    click_macro._template = Template(click_macro_template)
+    f_map.add_child(click_macro)
 
-        # Removed '.format()' and safely injected standard values via sequential '.replace()'
-        legend_template = """
+    v_min, v_max = f"{min_val:.1f}%", f"{max_val:.1f}%"
+    css_gradient = ", ".join(high_contrast_palette)
+
+    legend_template = (
+        """
         {% macro html(this, kwargs) %}
         <div id='maplegend' class='maplegend' style='position: absolute; z-index:9999; border:2px solid #bbb; background-color:rgba(255, 255, 255, 0.95); border-radius:8px; padding: 12px 15px; font-size:13px; right: 20px; bottom: 30px; width: 280px; font-family: "Source Sans Pro", sans-serif; box-shadow: 0 0 15px rgba(0,0,0,0.2);'>
           <div class='legend-title' style='font-weight: bold; margin-bottom: 8px; text-align: center; color: #333;'>Malaria Prevalence (PfPR2-10)</div>
@@ -492,46 +647,140 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
           </div>
         </div>
         {% endmacro %}
-        """
-        
-        legend_template = (
-            legend_template
-            .replace("REPLACE_GRADIENT_PALETTE", css_gradient)
-            .replace("REPLACE_V_MIN", v_min)
-            .replace("REPLACE_V_MAX", v_max)
-        )
-        
-        legend_macro = MacroElement()
-        legend_macro._template = Template(legend_template)
-        f_map.add_child(legend_macro)
+        """.replace("REPLACE_GRADIENT_PALETTE", css_gradient)
+        .replace("REPLACE_V_MIN", v_min)
+        .replace("REPLACE_V_MAX", v_max)
+    )
 
-        folium.LayerControl().add_to(f_map)
-        components.html(f_map._repr_html_(), height=600, scrolling=True)
+    legend_macro = MacroElement()
+    legend_macro._template = Template(legend_template)
+    f_map.add_child(legend_macro)
 
-        # 💾 Export Spatial Products Code block
-        st.write("---")
-        st.write("### 💾 Export Spatial Products:")
-        try:
-            raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
-                'name': f'PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}',
-                'scale': 5000, 
-                'crs': 'EPSG:4326', 
-                'filePerBand': False
-            })
-            st.markdown(f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})")
-        except Exception:
-            st.info("Download link generation timed out on remote GEE servers.")
+    folium.LayerControl().add_to(f_map)
+    components.html(f_map._repr_html_(), height=600, scrolling=True)
 
-    # =========================================================
-    # How to Use & Guidelines (Scoped strictly inside workspace view)
-    # =========================================================
+    # Export Spatial Products Code block
     st.write("---")
-    st.write("## 📖 How To Use This Module Panel")
+    st.write("### 💾 Export Spatial Products:")
+    try:
+      raw_download_url = st.session_state.smoothed_prediction_30m.getDownloadURL({
+          "name": (
+              f"PfPR_Output_{st.session_state.target_district}_{st.session_state.target_year}"
+          ),
+          "scale": 5000,
+          "crs": "EPSG:4326",
+          "filePerBand": False,
+      })
+      st.markdown(
+          f"[📥 Download Native 5km Model Raster (.tiff)]({raw_download_url})"
+      )
+    except Exception:
+      st.info("Download link generation timed out on remote GEE servers.")
 
-    with st.expander("ℹ️ How to Use This Module", expanded=True):
-        st.markdown(f"""
+  # How to Use & Guidelines
+  st.write("---")
+  st.write("## 📖 How To Use This Module Panel")
+
+  with st.expander("ℹ️ How to Use This Module", expanded=True):
+    st.markdown(f"""
 1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{st.session_state.target_year}**.
 2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial XGBoost model.
 3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
 4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
         """)
+
+# ==========================================
+# View 3: User Feedback Panel
+# ==========================================
+elif current_view == "User Feedback":
+  st.header("💬 User Feedback & Field Validation")
+  st.write(
+      "Help improve the **MPP (Malaria Prevalence Prediction)** platform by"
+      " sharing your experience, reporting discrepancies against local"
+      " health facility data, or suggesting new features."
+  )
+
+  feedback_file = "user_feedback.csv"
+
+  with st.form("mpp_feedback_form", clear_on_submit=True):
+    col1, col2 = st.columns(2)
+    with col1:
+      user_name = st.text_input("Name / Organization (Optional)")
+      user_role = st.selectbox(
+          "Your Role",
+          [
+              "Public Health Officer",
+              "Epidemiologist / Researcher",
+              "GIS / Remote Sensing Specialist",
+              "Student / Academic",
+              "Other",
+          ],
+      )
+    with col2:
+      feedback_category = st.selectbox(
+          "Feedback Category",
+          [
+              "Prediction Accuracy / Field Validation",
+              "Map & Visualization Usability",
+              "Feature Request (e.g., New District)",
+              "Bug / Technical Issue",
+              "General Comment",
+          ],
+      )
+      usability_rating = st.slider(
+          "Overall Platform Rating (1 = Poor, 5 = Excellent)",
+          min_value=1,
+          max_value=5,
+          value=5,
+      )
+
+    comments = st.text_area(
+        "Detailed Feedback or Local Observations",
+        placeholder=(
+            "E.g., Predicted PfPR aligns well with clinic trends in northern"
+            " Karagwe, or suggest adding monthly breakdowns..."
+        ),
+        height=130,
+    )
+
+    submitted = st.form_submit_button("Submit Feedback", type="primary")
+
+    if submitted:
+      if not comments.strip():
+        st.warning("Please enter your feedback comments before submitting.")
+      else:
+        new_entry = pd.DataFrame([{
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Name_Org": user_name.strip() if user_name.strip() else "Anonymous",
+            "Role": user_role,
+            "Category": feedback_category,
+            "Rating": usability_rating,
+            "Target_Year_Viewed": st.session_state.target_year,
+            "Comments": comments.strip(),
+        }])
+
+        if os.path.exists(feedback_file):
+          new_entry.to_csv(feedback_file, mode="a", header=False, index=False)
+        else:
+          new_entry.to_csv(feedback_file, mode="w", header=True, index=False)
+
+        st.success(
+            "Thank you! Your feedback has been recorded to help improve MPP."
+        )
+
+  # Display recent submitted feedback & CSV export option
+  if os.path.exists(feedback_file):
+    st.write("---")
+    st.subheader("📋 Recent Community & Stakeholder Feedback")
+    df_feedback = pd.read_csv(feedback_file)
+    st.dataframe(
+        df_feedback.iloc[::-1],  # Show newest first
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.download_button(
+        label="📥 Download All Feedback (CSV)",
+        data=df_feedback.to_csv(index=False).encode("utf-8"),
+        file_name="mpp_user_feedback.csv",
+        mime="text/csv",
+    )
