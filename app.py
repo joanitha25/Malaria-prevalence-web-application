@@ -45,11 +45,11 @@ st.markdown("""
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
-    return joblib.load("final_selected_pfpr_model.joblib")
+    return joblib.load("xgboost_pfpr.joblib")
 
 @st.cache_data
 def load_model_features():
-    with open("final_model_features.json", "r") as f:
+    with open("features.json", "r") as f:
         return json.load(f)
 
 model_pipeline = load_ml_pipeline()
