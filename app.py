@@ -41,13 +41,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. MODEL LOADING (Cached)
+# 1. MODEL & FEATURE LOADING (Cached)
 # ==============================================================================
 @st.cache_resource
 def load_ml_pipeline():
-    return joblib.load("best_rf_reduced_model.joblib")
+    return joblib.load("final_selected_pfpr_model.joblib")
+
+@st.cache_data
+def load_model_features():
+    with open("final_model_features.json", "r") as f:
+        return json.load(f)
 
 model_pipeline = load_ml_pipeline()
+model_features = load_model_features()
 
 # ==============================================================================
 # 2. EARTH ENGINE AUTHENTICATION SETUP
@@ -103,7 +109,7 @@ if current_view == "About the Application":
         """
         This web application provides an automated platform for predicting the *Plasmodium falciparum* parasite 
         rate for children between 2 and 10 years (**PfPR2-10**) using satellite-derived environmental variables 
-        and a trained Random Forest machine learning model. It integrates Google Earth Engine (GEE) to 
+        and a trained XGBoost machine learning pipeline. It integrates Google Earth Engine (GEE) to 
         automatically retrieve environmental predictors, including the Normalized Difference Water Index (NDWI), 
         Normalized Difference Moisture Index (NDMI), land surface temperature (LST), rainfall, elevation, 
         and distance to water bodies, for the selected district and year.
@@ -150,19 +156,6 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 st.rerun()
         except Exception as e:
             pass
-    
-    # Model Achievement Metrics Column Layout
-    st.write("### 📊 Predictive Model Achieved Metrics")
-    m_col1, m_col2, m_col3 = st.columns(3)
-    with m_col1:
-        st.metric(label="Mean Absolute Error (MAE)", value="0.592", delta="Good Precision")
-    with m_col2:
-        st.metric(label="Root Mean Squared Error (RMSE)", value="0.848", delta="Low Prediction Error")
-    with m_col3:
-        st.metric(label="R-squared (R² Coefficient)", value="84.7%", delta="Strong Variance Explained")
-
-    st.markdown("The underlying machine learning model is trained on spatial covariate extractions from public databases, showing highly robust performance profiles across variable ecosystems.")
-    st.write("---")
 
     def reset_map_state():
         st.session_state.map_ready = False
@@ -270,7 +263,16 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             water5km = water.reproject(crs=commonCRS, scale=pfprScale).unmask(0)
             distWater5km = water5km.fastDistanceTransform(256, "pixels", "squared_euclidean").sqrt().multiply(pfprScale).rename("DistWater").clip(aoi_geometry)
 
-            band_names = ["NDWI", "NDMI", "LST", "Rainfall", "Elevation", "DistWater"]
+            # Map available GEE feature layers to the features specified in final_model_features.json
+            feature_layers = {
+                "NDWI": ndwi,
+                "NDMI": ndmi,
+                "LST": lst,
+                "Rainfall": rainfall,
+                "Elevation": elevation,
+                "DistWater": distWater5km
+            }
+            selected_bands = [feature_layers[feat] for feat in model_features]
             
             # ------------------------------------------------------------
             # PERSONAL USER ASSETS PATH ROUTING MAP (Validation check)
@@ -288,10 +290,10 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
                 map_target_year = min(st.session_state.target_year, 2024)
                 selected_asset_path = user_map_assets[map_target_year]
                 map_raster = ee.Image(selected_asset_path).select([0]).rename("MAP_PfPR").clip(aoi_geometry)
-                raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km, map_raster]).toFloat()
+                raw_stack = ee.Image.cat(selected_bands + [map_raster]).toFloat()
             else:
                 map_raster = None
-                raw_stack = ee.Image.cat([ndwi, ndmi, lst, rainfall, elevation, distWater5km]).toFloat()
+                raw_stack = ee.Image.cat(selected_bands).toFloat()
 
             # ==================================================================
             # ROBUST SERVER-SIDE SAMPLING
@@ -318,8 +320,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
             pixel_data = pd.DataFrame(features_list) if features_list else pd.DataFrame()
 
             if not pixel_data.empty:
-                pixel_data = pixel_data.dropna(subset=band_names)
-                X_pixels = pixel_data[band_names]
+                pixel_data = pixel_data.dropna(subset=model_features)
+                X_pixels = pixel_data[model_features]
                 pixel_data["predicted_PfPR"] = model_pipeline.predict(X_pixels)
                 
                 if "MAP_PfPR" in pixel_data.columns:
@@ -528,8 +530,8 @@ elif current_view == "Malaria Prevalence Prediction Workspace":
 
     with st.expander("ℹ️ How to Use This Module", expanded=True):
         st.markdown(f"""
-        1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{st.session_state.target_year}**.
-        2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial Random Forest model.
-        3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
-        4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
+1. **Select Target Projection Year:** Choose the specific year (between 2020 and 2027) for projection. Current selected year is **{st.session_state.target_year}**.
+2. **Run Predictions:** Click the "Run Predictions" button to fetch the dynamic Earth Engine products and evaluate the spatial XGBoost model.
+3. **Interact with the Map:** Use the layers panel, pan, or zoom into the high-resolution layers. Use the **Scale Bar** on the bottom-left of the map to interpret predictive values.
+4. **Extract Values:** Click any point on the map to instantly retrieve localized environmental predictors and model calculations inside the map popup window.
         """)
