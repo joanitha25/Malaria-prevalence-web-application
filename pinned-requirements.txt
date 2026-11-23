@@ -1,9 +1,0 @@
-streamlit
-joblib
-numpy
-pandas
-earthengine-api
-folium
-branca
-scikit-learn==1.6.1
-xgboost
